@@ -1,7 +1,7 @@
 import SwiftUI
 import Combine
 
-// MARK: - 🛠 Хранилище Настроек
+// Хранилище Настроек
 
 class AppSettings: ObservableObject {
     @AppStorage("apiKey") var apiKey: String = ""

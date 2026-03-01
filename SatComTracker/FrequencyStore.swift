@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-// MARK: - 💾 Хранилище частот
+// Хранилище частот
 
 class FrequencyStore: ObservableObject {
     static let shared = FrequencyStore()
@@ -76,11 +76,10 @@ class FrequencyStore: ObservableObject {
         loadFrequencies()
     }
     
-    // MARK: - Загрузка предустановленных частот из файла
+    // Загрузка предустановленных частот
     private func loadPredefinedFrequencies() {
         var frequencies: [String: [SatelliteFrequencyData]] = [:]
         
-        // Данные из файла Таблица частот_SATCOM 24.11.2025.xlsx
         let frequencyData: [(Int, Double, Double, Double, Int, String)] = [
             // UFO 11
             (1, 243.625, 316.725, 73.100, 32, "UFO 11"),
@@ -415,7 +414,7 @@ class FrequencyStore: ObservableObject {
         }
     }
     
-    // MARK: - Загрузка и сохранение отредактированных частот
+    // Загрузка и сохранение отредактированных частот
     private func loadEditedFrequencies() {
         guard let data = UserDefaults.standard.data(forKey: editedKey),
               let decoded = try? JSONDecoder().decode([String: [UUID: SatelliteFrequencyData]].self, from: data) else {
@@ -432,7 +431,7 @@ class FrequencyStore: ObservableObject {
         }
     }
     
-    // НОВЫЙ МЕТОД: обновление предустановленной частоты
+    // Обновление предустановленной частоты
     func updatePredefinedFrequency(satelliteName: String, frequencyId: UUID, newRX: Double, newTX: Double, newName: String) {
         guard var freqList = predefinedFrequencies[satelliteName],
               let index = freqList.firstIndex(where: { $0.id == frequencyId }) else { return }
@@ -461,7 +460,7 @@ class FrequencyStore: ObservableObject {
         }
     }
     
-    // НОВЫЙ МЕТОД: сброс к оригинальным значениям
+    // Сброс к оригинальным значениям
     func resetPredefinedFrequency(satelliteName: String, frequencyId: UUID) {
         guard var freqList = predefinedFrequencies[satelliteName],
               let index = freqList.firstIndex(where: { $0.id == frequencyId }),
@@ -490,12 +489,12 @@ class FrequencyStore: ObservableObject {
         }
     }
     
-    // НОВЫЙ МЕТОД: получение имени спутника по NORAD ID
+    // Получение имени спутника по NORAD ID
     func getSatelliteName(for noradID: Int) -> String? {
         return noradToNameMap[noradID]
     }
     
-    // ИСПРАВЛЕННЫЙ МЕТОД: получение предустановленных каналов по NORAD ID
+    // Получение предустановленных каналов по NORAD ID
     func getPredefinedChannels(for noradID: Int) -> [CommunicationChannel] {
         // Сначала пытаемся найти по точному соответствию
         if let satelliteName = getSatelliteName(for: noradID),

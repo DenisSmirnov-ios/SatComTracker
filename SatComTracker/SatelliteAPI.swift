@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-// MARK: - 🚀 API Сервис
+// API Сервис
 
 class SatelliteAPI: ObservableObject {
     @Published var satellites: [Satellite] = []

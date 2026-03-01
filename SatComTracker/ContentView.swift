@@ -3,7 +3,7 @@ import CoreLocation
 import Combine
 import MapKit
 
-// MARK: - 🎨 UI Компоненты
+// UI Компоненты
 
 struct ActiveCompassView: View {
     let satelliteAzimuth: Double
@@ -72,7 +72,7 @@ struct Triangle: Shape {
     }
 }
 
-// ИСПРАВЛЕННАЯ SatelliteRow
+// SatelliteRow
 struct SatelliteRow: View {
     let satellite: Satellite
     @ObservedObject var frequencyStore = FrequencyStore.shared
@@ -139,7 +139,7 @@ struct SatelliteRow: View {
     }
 }
 
-// MARK: - Экран редактирования каналов связи
+// Экран редактирования каналов связи
 
 struct FrequencyEditView: View {
     let satelliteId: Int
@@ -257,13 +257,13 @@ struct FrequencyEditView: View {
         }
     }
     
-    // ИСПРАВЛЕНО: используем satelliteId для получения предустановленных каналов
+    // используем satelliteId для получения предустановленных каналов
     private var predefinedChannels: [FrequencyStore.CommunicationChannel] {
         frequencyStore.getPredefinedChannels(for: satelliteId)
     }
 }
 
-// НОВЫЙ ВЬЮ: редактирование предустановленного канала
+// редактирование предустановленного канала
 struct PredefinedChannelEditView: View {
     let satelliteName: String
     let channel: FrequencyStore.CommunicationChannel
@@ -562,7 +562,7 @@ struct ChannelEditView: View {
     }
 }
 
-// MARK: - Карточка спутника
+// Карточка спутника
 
 struct SatelliteDetailView: View {
     let satellite: Satellite
@@ -591,7 +591,7 @@ struct SatelliteDetailView: View {
                     CompassSection(satellite: satellite, compassManager: compassManager)
                 }
                 
-                // ИСПРАВЛЕНО: передаем satellite.id и satellite.name
+                // передаем satellite.id и satellite.name
                 FrequencySection(satelliteId: satellite.id, satelliteName: satellite.name, onEdit: { showFrequencyEdit = true })
             }
             .padding()
@@ -785,7 +785,7 @@ struct InstructionRow: View {
     }
 }
 
-// ИСПРАВЛЕННАЯ FrequencySection
+// FrequencySection
 struct FrequencySection: View {
     let satelliteId: Int
     let satelliteName: String
@@ -908,7 +908,7 @@ struct CompactChannelCard: View {
     }
 }
 
-// MARK: - 🗺️ Окно карты
+// Окно карты
 
 struct MapLocationView: View {
     @Environment(\.dismiss) var dismiss
@@ -1088,7 +1088,7 @@ struct MapLocationView: View {
     }
 }
 
-// MARK: - UIViewRepresentable для MKMapView
+// UIViewRepresentable для MKMapView
 
 struct MapView: UIViewRepresentable {
     @Binding var region: MKCoordinateRegion
@@ -1173,7 +1173,7 @@ struct MapView: UIViewRepresentable {
     }
 }
 
-// MARK: - ⚙️ Экран Настроек
+// Экран Настроек
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
@@ -1381,7 +1381,7 @@ struct SettingsView: View {
         }
     }
     
-    // MARK: - Location Views
+    // Location Views
     
     @ViewBuilder
     private var gpsLocationView: some View {
@@ -1556,7 +1556,7 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - 🏠 Главный Экран (ОБНОВЛЕННЫЙ)
+// Главный Экран
 
 extension Notification.Name {
     static let settingsChanged = Notification.Name("settingsChanged")
@@ -1723,7 +1723,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Вспомогательные компоненты главного экрана
+// Вспомогательные компоненты главного экрана
 
 struct WelcomeView: View {
     @Binding var showSettings: Bool
@@ -1926,7 +1926,7 @@ struct ErrorRow: View {
     }
 }
 
-// MARK: - Preview
+// Preview
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()

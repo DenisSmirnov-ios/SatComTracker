@@ -1,7 +1,7 @@
 import Foundation
 import CoreLocation
 
-// MARK: - 🔑 Настройки API
+// Настройки API
 struct APIConfig {
     static let baseURL = "https://api.n2yo.com/rest/v1/satellite"
     static let maxConcurrentRequests = 5
@@ -9,7 +9,7 @@ struct APIConfig {
     static let retryCount = 3
 }
 
-// MARK: - 📦 Модели данных
+// Модели данных
 
 struct Satellite: Identifiable, Codable {
     let id: Int
@@ -64,7 +64,7 @@ struct SatellitePositionsResponse: Codable {
     }
 }
 
-// MARK: - 📡 Модель частот из файла
+// Модель частот
 
 struct SatelliteFrequencyData: Identifiable, Codable {
     var id = UUID()
@@ -79,7 +79,7 @@ struct SatelliteFrequencyData: Identifiable, Codable {
     var originalTX: Double?
 }
 
-// MARK: - 🛰️ Справочник SATCOM спутников
+// Справочник SATCOM спутников
 
 struct SatcomReference {
     static let allSatellites: [SatcomSatellite] = [
@@ -109,7 +109,7 @@ struct SatcomSatellite: Identifiable {
     let defaultChannels: Int
 }
 
-// MARK: - 🗺️ Результат поиска и модель для карты
+// Результат поиска и модель для карты
 
 struct LocationSearchResult: Identifiable {
     let id: UUID

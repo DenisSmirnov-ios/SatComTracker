@@ -2,7 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 
-// MARK: - 🗺️ Геокодер и работа с картой
+// Геокодер и работа с картой
 
 class GeocoderManager: ObservableObject {
     private let geocoder = CLGeocoder()

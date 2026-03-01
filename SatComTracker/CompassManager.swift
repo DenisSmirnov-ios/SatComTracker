@@ -2,7 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 
-// MARK: - 🧭 Менеджер Магнитного Компаса
+// Менеджер Магнитного Компаса
 
 class CompassManager: NSObject, ObservableObject {
     private let locationManager = CLLocationManager()

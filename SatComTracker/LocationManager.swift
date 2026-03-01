@@ -2,7 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 
-// MARK: - 🧭 Менеджер Локации
+// Менеджер Локации
 
 class LocationManager: NSObject, ObservableObject {
     private let manager = CLLocationManager()
