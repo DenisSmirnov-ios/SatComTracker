@@ -209,7 +209,6 @@ struct ErrorRow: View {
 
 struct SatelliteRow: View {
     let satellite: Satellite
-    @ObservedObject var frequencyStore = FrequencyStore.shared
     
     var body: some View {
         HStack {
@@ -236,17 +235,6 @@ struct SatelliteRow: View {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
                             .background(Color.red.opacity(0.1))
-                            .cornerRadius(2)
-                    }
-                    
-                    let channels = frequencyStore.getPredefinedChannels(for: satellite.id)
-                    if !channels.isEmpty {
-                        Text("📡 \(channels.count)")
-                            .font(.caption2)
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(Color.blue.opacity(0.1))
                             .cornerRadius(2)
                     }
                 }

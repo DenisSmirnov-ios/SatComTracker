@@ -37,12 +37,7 @@ class AppSettings: ObservableObject {
         }
     }
     
-    init() {
-        if noradIDsString.isEmpty {
-            let defaultIDs = SatcomReference.allSatellites.map { String($0.noradID) }.joined(separator: ",")
-            noradIDsString = defaultIDs
-        }
-    }
+    init() {}
     
     var noradIDs: [Int] {
         get {
@@ -122,12 +117,17 @@ class AppSettings: ObservableObject {
         }
     }
     
-    func removeCustomID(_ noradID: Int) {
-        customIDs = customIDs.filter { $0 != noradID }
+    func addCustomIDs(_ ids: [Int]) {
+        guard !ids.isEmpty else { return }
+        var current = Set(customIDs)
+        for id in ids where id > 0 {
+            current.insert(id)
+        }
+        customIDs = Array(current).sorted()
     }
     
-    func selectAllSatellites() {
-        noradIDs = SatcomReference.allSatellites.map { $0.noradID }
+    func removeCustomID(_ noradID: Int) {
+        customIDs = customIDs.filter { $0 != noradID }
     }
     
     func clearAllSatellites() {

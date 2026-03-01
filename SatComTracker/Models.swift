@@ -23,7 +23,7 @@ struct Satellite: Identifiable, Codable {
     var errorMessage: String?
     
     var isVisible: Bool {
-        elevation >= 0
+        !isError && elevation >= 0
     }
 }
 
@@ -62,51 +62,6 @@ struct SatellitePositionsResponse: Codable {
         let timestamp: TimeInterval
         let eclipsed: Bool
     }
-}
-
-// Модель частот
-
-struct SatelliteFrequencyData: Identifiable, Codable {
-    var id = UUID()
-    let number: Int
-    var rxFrequency: Double
-    var txFrequency: Double
-    let spacing: Double
-    let bandwidth: Int
-    let satelliteName: String
-    var isEdited: Bool = false
-    var originalRX: Double?
-    var originalTX: Double?
-}
-
-// Справочник SATCOM спутников
-
-struct SatcomReference {
-    static let allSatellites: [SatcomSatellite] = [
-        SatcomSatellite(noradID: 25967, name: "UFO 10", category: "UFO Серия", defaultChannels: 47),
-        SatcomSatellite(noradID: 28117, name: "UFO 11", category: "UFO Серия", defaultChannels: 89),
-        SatcomSatellite(noradID: 22787, name: "UFO 2", category: "UFO Серия", defaultChannels: 6),
-        SatcomSatellite(noradID: 20253, name: "FLTSATCOM 8", category: "FLTSATCOM", defaultChannels: 13),
-        SatcomSatellite(noradID: 29631, name: "Skynet 4C", category: "Skynet", defaultChannels: 9),
-        SatcomSatellite(noradID: 30794, name: "Skynet 4E", category: "Skynet", defaultChannels: 2),
-        SatcomSatellite(noradID: 32283, name: "Skynet 5A", category: "Skynet", defaultChannels: 3),
-        SatcomSatellite(noradID: 33272, name: "Skynet 5B", category: "Skynet", defaultChannels: 11),
-        SatcomSatellite(noradID: 36581, name: "Skynet 5C", category: "Skynet", defaultChannels: 8),
-        SatcomSatellite(noradID: 36582, name: "Skynet 5D", category: "Skynet", defaultChannels: 8),
-        SatcomSatellite(noradID: 35943, name: "COMSATBW 1", category: "COMSAT", defaultChannels: 2),
-        SatcomSatellite(noradID: 38098, name: "INTELSAT 22", category: "INTELSAT", defaultChannels: 27),
-        SatcomSatellite(noradID: 26694, name: "SICRAL 1", category: "SICRAL", defaultChannels: 1),
-        SatcomSatellite(noradID: 34810, name: "SICRAL 1B", category: "SICRAL", defaultChannels: 14),
-        SatcomSatellite(noradID: 40614, name: "SICRAL 2", category: "SICRAL", defaultChannels: 10)
-    ]
-}
-
-struct SatcomSatellite: Identifiable {
-    let id = UUID()
-    let noradID: Int
-    let name: String
-    let category: String
-    let defaultChannels: Int
 }
 
 // Результат поиска и модель для карты

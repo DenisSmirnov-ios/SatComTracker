@@ -70,8 +70,10 @@ struct Triangle: Shape {
 struct SatelliteDetailView: View {
     let satellite: Satellite
     @ObservedObject var compassManager: CompassManager
-    @ObservedObject var frequencyStore = FrequencyStore.shared
-    @State private var showFrequencyEdit = false
+    
+    private var libraryChannels: [SatelliteFrequencyItem] {
+        SatelliteFrequencyLibrary.channels(for: satellite)
+    }
     
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -94,46 +96,177 @@ struct SatelliteDetailView: View {
                     CompassSection(satellite: satellite, compassManager: compassManager)
                 }
                 
-                FrequencySection(
-                    satelliteId: satellite.id,
-                    satelliteName: satellite.name,
-                    onEdit: { showFrequencyEdit = true }
-                )
+                if !libraryChannels.isEmpty {
+                    LibraryFrequenciesSection(satelliteId: satellite.id, channels: libraryChannels)
+                }
             }
             .padding()
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showFrequencyEdit = true }) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 16))
-                        .overlay(
-                            Group {
-                                let channels = frequencyStore.getPredefinedChannels(for: satellite.id)
-                                if !channels.isEmpty {
-                                    Text("\(channels.count)")
-                                        .font(.system(size: 8))
-                                        .foregroundColor(.white)
-                                        .padding(4)
-                                        .background(Color.red)
-                                        .clipShape(Circle())
-                                        .offset(x: 10, y: -10)
-                                }
-                            }
-                        )
-                }
-            }
-        }
-        .sheet(isPresented: $showFrequencyEdit) {
-            FrequencyEditView(satelliteId: satellite.id, satelliteName: satellite.name)
-        }
         .onAppear {
             compassManager.start()
         }
         .onDisappear {
             compassManager.stop()
+        }
+    }
+}
+
+struct LibraryFrequenciesSection: View {
+    let satelliteId: Int
+    let channels: [SatelliteFrequencyItem]
+    @ObservedObject private var stateStore = SatelliteFrequencyStateStore.shared
+    
+    @State private var editingItem: SatelliteFrequencyItem?
+    @State private var commentDraft: String = ""
+    
+    private var visibleChannels: [SatelliteFrequencyItem] {
+        channels.filter { !stateStore.state(for: satelliteId, item: $0).isDeleted }
+    }
+    
+    private var hiddenCount: Int {
+        channels.count - visibleChannels.count
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("RX/TX Частоты", systemImage: "dot.radiowaves.left.and.right")
+                    .font(.headline)
+                Spacer()
+                Text("\(visibleChannels.count)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            if visibleChannels.isEmpty {
+                Text("Нет активных частот в списке")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(visibleChannels) { item in
+                    let state = stateStore.state(for: satelliteId, item: item)
+                    
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 10) {
+                            Text("RX \(format(item.rxMHz))")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                            Text("TX \(format(item.txMHz))")
+                                .font(.caption)
+                                .foregroundColor(.orange)
+                            Spacer()
+                            
+                            if state.isNotWorking {
+                                Text("НЕ РАБОТАЕТ")
+                                    .font(.caption2)
+                                    .foregroundColor(.red)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.red.opacity(0.12))
+                                    .cornerRadius(6)
+                            }
+                            
+                            Menu {
+                                Button("Комментарий") {
+                                    commentDraft = state.comment
+                                    editingItem = item
+                                }
+                                
+                                Button(state.isNotWorking ? "Снять пометку \"не работает\"" : "Пометить как \"не работает\"") {
+                                    stateStore.setNotWorking(!state.isNotWorking, for: satelliteId, item: item)
+                                }
+                                
+                                Button("Удалить из списка", role: .destructive) {
+                                    stateStore.setDeleted(true, for: satelliteId, item: item)
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        
+                        if !state.comment.isEmpty {
+                            Text(state.comment)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.leading, 2)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            
+            if hiddenCount > 0 {
+                Button("Восстановить удаленные (\(hiddenCount))") {
+                    stateStore.restoreAllDeleted(for: satelliteId)
+                }
+                .font(.caption)
+            }
+        }
+        .padding()
+        .background(Color.gray.opacity(0.08))
+        .cornerRadius(12)
+        .sheet(item: $editingItem) { item in
+            FrequencyCommentEditorView(
+                initialComment: commentDraft,
+                isNotWorking: stateStore.state(for: satelliteId, item: item).isNotWorking,
+                onSave: { comment, isNotWorking in
+                    stateStore.setComment(comment, for: satelliteId, item: item)
+                    stateStore.setNotWorking(isNotWorking, for: satelliteId, item: item)
+                }
+            )
+        }
+    }
+    
+    private func format(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return String(format: "%.3f MHz", value)
+    }
+}
+
+struct FrequencyCommentEditorView: View {
+    let initialComment: String
+    let isNotWorking: Bool
+    let onSave: (String, Bool) -> Void
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var comment: String
+    @State private var notWorking: Bool
+    
+    init(initialComment: String, isNotWorking: Bool, onSave: @escaping (String, Bool) -> Void) {
+        self.initialComment = initialComment
+        self.isNotWorking = isNotWorking
+        self.onSave = onSave
+        _comment = State(initialValue: initialComment)
+        _notWorking = State(initialValue: isNotWorking)
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("Комментарий")) {
+                    TextEditor(text: $comment)
+                        .frame(minHeight: 120)
+                }
+                
+                Section {
+                    Toggle("Пометить как \"не работает\"", isOn: $notWorking)
+                }
+            }
+            .navigationTitle("Частота")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Отмена") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Сохранить") {
+                        onSave(comment, notWorking)
+                        dismiss()
+                    }
+                }
+            }
         }
     }
 }

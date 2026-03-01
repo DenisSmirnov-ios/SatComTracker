@@ -76,10 +76,23 @@ class SatelliteAPI: ObservableObject {
         }.value
         
         self.satellites = sortedSatellites
-        self.lastUpdateTime = Date()
-        onCacheUpdated?()
+        
+        let failedCount = sortedSatellites.filter(\.isError).count
+        if failedCount > 0 {
+            if failedCount == sortedSatellites.count {
+                self.errorMessage = "Не удалось загрузить данные по спутникам. Проверьте API-ключ и сеть."
+            } else {
+                self.errorMessage = "Часть данных не загружена (\(failedCount) из \(sortedSatellites.count))."
+            }
+        }
+        
+        if failedCount == 0 {
+            self.lastUpdateTime = Date()
+            onCacheUpdated?()
+            self.saveToCache(sortedSatellites, latitude: latitude, longitude: longitude)
+        }
+        
         self.isLoading = false
-        self.saveToCache(sortedSatellites, latitude: latitude, longitude: longitude)
     }
     
     private func fetchSingleSatellite(noradID: Int, apiKey: String,
@@ -168,7 +181,7 @@ class SatelliteAPI: ObservableObject {
     }
     
     private func createErrorSatellite(id: Int, message: String) -> Satellite {
-        Satellite(id: id, name: "ID: \(id)", azimuth: 0, elevation: 0,
+        Satellite(id: id, name: "ID: \(id)", azimuth: 0, elevation: -90,
                  distanceKm: 0, velocity: 0, timestamp: Date(), isError: true, errorMessage: message)
     }
     

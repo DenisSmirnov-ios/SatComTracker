@@ -1,27 +1,22 @@
 import SwiftUI
 import CoreLocation
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var settings: AppSettings
     @ObservedObject var locationManager: LocationManager
     
-    @State private var searchText = ""
     @State private var newCustomID = ""
     @State private var showingClearAlert = false
     @State private var showingMapView = false
+    @State private var showingTLEImporter = false
+    @State private var tleImportStatus: String?
     
     @State private var settingsChanged = false
-    
-    var filteredSatellites: [SatcomSatellite] {
-        if searchText.isEmpty {
-            return SatcomReference.allSatellites
-        }
-        return SatcomReference.allSatellites.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText) ||
-            String($0.noradID).contains(searchText) ||
-            $0.category.localizedCaseInsensitiveContains(searchText)
-        }
+        
+    var sortedSatelliteIDs: [Int] {
+        settings.allActiveIDs.sorted()
     }
     
     var body: some View {
@@ -89,44 +84,7 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("📡 Спутники (из файла частот)")) {
-                    TextField("Поиск...", text: $searchText)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: searchText) { _ in
-                            settingsChanged = true
-                        }
-                    
-                    ForEach(filteredSatellites) { sat in
-                        HStack {
-                            Image(systemName: settings.isSatelliteSelected(sat.noradID) ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(settings.isSatelliteSelected(sat.noradID) ? .green : .gray)
-                            
-                            VStack(alignment: .leading) {
-                                Text(sat.name)
-                                    .font(.subheadline)
-                                HStack {
-                                    Text("\(sat.noradID) • \(sat.category)")
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                    if sat.defaultChannels > 0 {
-                                        Text("📡 \(sat.defaultChannels) каналов")
-                                            .font(.caption2)
-                                            .foregroundColor(.blue)
-                                    }
-                                }
-                            }
-                            
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            settings.toggleSatellite(sat.noradID)
-                            settingsChanged = true
-                        }
-                    }
-                }
-                
-                Section(header: Text("➕ Пользовательские ID")) {
+                Section(header: Text("🛰️ Спутники (NORAD ID)")) {
                     HStack {
                         TextField("NORAD ID", text: $newCustomID)
                             .keyboardType(.numberPad)
@@ -140,12 +98,28 @@ struct SettingsView: View {
                         .disabled(newCustomID.isEmpty)
                     }
                     
-                    ForEach(settings.customIDs, id: \.self) { id in
+                    Button("Импортировать TLE файл") {
+                        showingTLEImporter = true
+                    }
+                    
+                    if let status = tleImportStatus {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    if sortedSatelliteIDs.isEmpty {
+                        Text("Список пуст. Добавьте NORAD ID вручную или импортируйте TLE.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    ForEach(sortedSatelliteIDs, id: \.self) { id in
                         HStack {
                             Text("ID: \(id)")
                             Spacer()
                             Button(action: {
-                                settings.removeCustomID(id)
+                                removeSatelliteID(id)
                                 settingsChanged = true
                             }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -156,17 +130,8 @@ struct SettingsView: View {
                 }
                 
                 Section {
-                    Button("Выбрать все спутники") {
-                        settings.selectAllSatellites()
-                        settingsChanged = true
-                    }
-                    
                     Button("Очистить все спутники", role: .destructive) {
                         showingClearAlert = true
-                    }
-                    
-                    Button("🗑 Очистить все частоты", role: .destructive) {
-                        FrequencyStore.shared.clearAll()
                     }
                 }
             }
@@ -196,12 +161,103 @@ struct SettingsView: View {
             .sheet(isPresented: $showingMapView) {
                 MapLocationView(settings: settings, locationManager: locationManager)
             }
+            .fileImporter(
+                isPresented: $showingTLEImporter,
+                allowedContentTypes: [.text, .plainText],
+                allowsMultipleSelection: false
+            ) { result in
+                handleTLEImport(result)
+            }
             .onDisappear {
                 if settingsChanged {
                     NotificationCenter.default.post(name: .settingsChanged, object: nil)
                 }
             }
         }
+    }
+    
+    private func removeSatelliteID(_ id: Int) {
+        settings.noradIDs = settings.noradIDs.filter { $0 != id }
+        settings.customIDs = settings.customIDs.filter { $0 != id }
+    }
+    
+    private func handleTLEImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            tleImportStatus = "Ошибка импорта: \(error.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else {
+                tleImportStatus = "Файл не выбран"
+                return
+            }
+            importTLE(from: url)
+        }
+    }
+    
+    private func importTLE(from url: URL) {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let ids = extractNORADIDs(fromTLEText: text)
+            guard !ids.isEmpty else {
+                tleImportStatus = "В файле не найдено корректных TLE записей"
+                return
+            }
+            settings.addCustomIDs(ids)
+            settingsChanged = true
+            tleImportStatus = "Импортировано \(ids.count) спутников из TLE"
+        } catch {
+            tleImportStatus = "Не удалось прочитать файл: \(error.localizedDescription)"
+        }
+    }
+    
+    private func extractNORADIDs(fromTLEText text: String) -> [Int] {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        
+        var ids = Set<Int>()
+        var index = 0
+        
+        while index < lines.count {
+            let line = lines[index]
+            if line.hasPrefix("1 "), let id = extractNORADID(fromLine1: line) {
+                ids.insert(id)
+                index += 1
+                continue
+            }
+            
+            // 3-строчный TLE: NAME, line1, line2
+            if index + 1 < lines.count,
+               lines[index + 1].hasPrefix("1 "),
+               let id = extractNORADID(fromLine1: lines[index + 1]) {
+                ids.insert(id)
+                index += 2
+                continue
+            }
+            
+            index += 1
+        }
+        
+        return Array(ids).sorted()
+    }
+    
+    private func extractNORADID(fromLine1 line: String) -> Int? {
+        let parts = line.split(whereSeparator: { $0.isWhitespace })
+        guard parts.count > 1 else { return nil }
+        
+        let token = String(parts[1])
+        let digits = token.prefix { $0.isNumber }
+        guard !digits.isEmpty else { return nil }
+        
+        return Int(digits)
     }
     
     @ViewBuilder

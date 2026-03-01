@@ -102,6 +102,11 @@ struct MapLocationView: View {
                                     Button("Выбрать") {
                                         settings.manualLatitude = String(format: "%.6f", coordinate.latitude)
                                         settings.manualLongitude = String(format: "%.6f", coordinate.longitude)
+                                        settings.lastSelectedAddress = selectedAddress ?? String(
+                                            format: "Ш: %.4f°, Д: %.4f°",
+                                            coordinate.latitude,
+                                            coordinate.longitude
+                                        )
                                         settings.locationSource = .map
                                         dismiss()
                                     }
@@ -222,7 +227,7 @@ struct MapView: UIViewRepresentable {
         
         @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
             if gesture.state == .began {
-                let mapView = gesture.view as! MKMapView
+                guard let mapView = gesture.view as? MKMapView else { return }
                 let point = gesture.location(in: mapView)
                 let coordinate = mapView.convert(point, toCoordinateFrom: mapView)
                 
