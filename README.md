@@ -103,6 +103,3 @@ SatComTracker/
 
 ---
 
-## Публикация на GitHub
-
-Инструкция по созданию репозитория и первому пушу: [docs/GITHUB_SETUP.md](docs/GITHUB_SETUP.md).
