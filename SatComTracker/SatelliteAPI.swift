@@ -59,12 +59,20 @@ class SatelliteAPI: ObservableObject {
             }
         }
         
+        // В модуле включен SWIFT_DEFAULT_ACTOR_ISOLATION=MainActor, поэтому свойства Satellite
+        // считаются MainActor-изолированными. Чтобы не сортировать на главном потоке и при этом
+        // не трогать MainActor-свойства в detached-задаче, заранее вычисляем ключи сортировки.
+        let sortable = allResults.values.map { satellite in
+            (isVisible: satellite.elevation >= 0, elevation: satellite.elevation, satellite: satellite)
+        }
+        
         let sortedSatellites = await Task.detached(priority: .userInitiated) { () -> [Satellite] in
-            let values = Array(allResults.values)
-            return values.sorted {
-                if $0.isVisible != $1.isVisible { return $0.isVisible }
-                return $0.elevation > $1.elevation
-            }
+            sortable
+                .sorted {
+                    if $0.isVisible != $1.isVisible { return $0.isVisible }
+                    return $0.elevation > $1.elevation
+                }
+                .map(\.satellite)
         }.value
         
         self.satellites = sortedSatellites
