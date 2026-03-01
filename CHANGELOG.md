@@ -64,6 +64,10 @@
 - **Было:** Создавался новый экземпляр `LocationManager()`, у которого не запрашивались права и не запускались обновления — `currentLocation` почти всегда `nil`, кнопка не работала.
 - **Стало:** В `MapLocationView` передаётся общий `LocationManager` из `SettingsView` (`MapLocationView(settings: settings, locationManager: locationManager)`), используется его `currentLocation`.
 
+#### 7. Единый источник данных по SATCOM-спутникам
+- **Было:** В `FrequencyStore` хранилась собственная карта `noradToNameMap`, а имена спутников в таблице частот местами отличались от справочника (`FLT 8`, `Comsat BW1`, `Sicral 1B`, `Sicral 2`).
+- **Стало:** Все соответствия NORAD → имя берутся из `SatcomReference.allSatellites`, а имена в предустановленных частотах выровнены под справочник (`FLTSATCOM 8`, `COMSATBW 1`, `SICRAL 1B`, `SICRAL 2`). `SatcomReference` теперь является единым источником правды по SATCOM-спутникам.
+
 ---
 
 ### Зависимости между модулями
