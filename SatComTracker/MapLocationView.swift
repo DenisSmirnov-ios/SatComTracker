@@ -13,7 +13,6 @@ struct MapLocationView: View {
     )
     @State private var selectedCoordinate: CLLocationCoordinate2D?
     @State private var searchText = ""
-    @State private var isSearching = false
     @State private var selectedAddress: String?
     @State private var mapType: MKMapType = .standard
     
@@ -27,7 +26,7 @@ struct MapLocationView: View {
                         .textFieldStyle(RoundedBorderTextFieldStyle())
                         .autocapitalization(.words)
                     
-                    if isSearching {
+                    if geocoderManager.isSearching {
                         ProgressView()
                             .scaleEffect(0.8)
                     }
@@ -145,7 +144,7 @@ struct MapLocationView: View {
                 }
             }
             .onChange(of: searchText) { newValue in
-                geocoderManager.searchAddress(newValue)
+                geocoderManager.query = newValue
             }
             .onChange(of: selectedCoordinate.map { "\($0.latitude),\($0.longitude)" }) { newValue in
                 guard let coordinate = selectedCoordinate else { return }

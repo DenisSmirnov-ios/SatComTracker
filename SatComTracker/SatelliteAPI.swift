@@ -59,10 +59,13 @@ class SatelliteAPI: ObservableObject {
             }
         }
         
-        let sortedSatellites = Array(allResults.values).sorted {
-            if $0.isVisible != $1.isVisible { return $0.isVisible }
-            return $0.elevation > $1.elevation
-        }
+        let sortedSatellites = await Task.detached(priority: .userInitiated) { () -> [Satellite] in
+            let values = Array(allResults.values)
+            return values.sorted {
+                if $0.isVisible != $1.isVisible { return $0.isVisible }
+                return $0.elevation > $1.elevation
+            }
+        }.value
         
         self.satellites = sortedSatellites
         self.lastUpdateTime = Date()

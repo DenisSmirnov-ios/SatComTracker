@@ -47,13 +47,13 @@ class FrequencyStore: ObservableObject {
     }
     
     private let storageKey = "satelliteFrequencies"
-    private let predefinedKey = "predefinedFrequencies"
     private let editedKey = "editedFrequencies"
     private let saveQueue = DispatchQueue(label: "frequencyStore.saveQueue")
     
     private init() {
-        loadEditedFrequencies()
         loadPredefinedFrequencies()
+        loadEditedFrequencies()
+        applyEditedFrequencies()
         loadFrequencies()
     }
     
@@ -388,11 +388,6 @@ class FrequencyStore: ObservableObject {
         for (key, value) in frequencies {
             predefinedFrequencies[key] = value.sorted { $0.rxFrequency < $1.rxFrequency }
         }
-        
-        // Сохраняем в UserDefaults
-        if let encoded = try? JSONEncoder().encode(predefinedFrequencies) {
-            UserDefaults.standard.set(encoded, forKey: predefinedKey)
-        }
     }
     
     // Загрузка и сохранение отредактированных частот
@@ -409,6 +404,25 @@ class FrequencyStore: ObservableObject {
             guard let self = self,
                   let encoded = try? JSONEncoder().encode(self.editedFrequencies) else { return }
             UserDefaults.standard.set(encoded, forKey: self.editedKey)
+        }
+    }
+    
+    /// Применяем отредактированные частоты поверх базовых предустановленных
+    private func applyEditedFrequencies() {
+        guard !editedFrequencies.isEmpty else { return }
+        
+        for (satelliteName, editedById) in editedFrequencies {
+            guard var baseList = predefinedFrequencies[satelliteName] else { continue }
+            
+            for (_, editedFreq) in editedById {
+                if let index = baseList.firstIndex(where: { $0.number == editedFreq.number }) {
+                    baseList[index] = editedFreq
+                } else {
+                    baseList.append(editedFreq)
+                }
+            }
+            
+            predefinedFrequencies[satelliteName] = baseList.sorted { $0.rxFrequency < $1.rxFrequency }
         }
     }
     
