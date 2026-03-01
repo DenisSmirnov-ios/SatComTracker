@@ -22,6 +22,23 @@
 
 ---
 
+### Разделение ContentView по экранам
+
+`ContentView.swift` (~1935 строк) дополнительно разнесён по фичевым модулям:
+
+| Файл | Содержимое |
+|------|------------|
+| **MainView.swift** | `WelcomeView`, `LocationPermissionView`, `RefreshButton`, `MainContentView`, `InfoBar`, `VisibilityIndicator`, `SatelliteList`, `ErrorRow`, `SatelliteRow` |
+| **SatelliteDetailView.swift** | `ActiveCompassView`, `Triangle`, `SatelliteDetailView`, `HeaderView`, `UpdateTimeView`, `BelowHorizonWarning`, `CompassSection`, `InstructionRow` |
+| **FrequencyViews.swift** | `FrequencySection`, `CompactChannelCard`, `FrequencyEditView`, `PredefinedChannelEditView`, `PredefinedChannelRow`, `ChannelRow`, `ChannelEditView` |
+| **MapLocationView.swift** | `MapLocationView`, `MapView` (UIViewRepresentable для MKMapView) |
+| **SettingsView.swift** | `SettingsView` и подвью: `gpsLocationView`, `manualLocationView`, `mapLocationView` |
+| **ContentView.swift** | Только композиция: `ContentView`, extension `Notification.Name`, превью (~170 строк) |
+
+Итог: UI разбит по экранам, каждый файл отвечает за одну фичу.
+
+---
+
 ### Оптимизации и исправления
 
 #### 1. Безопасная работа с жестом в MapView
@@ -42,6 +59,10 @@
 
 #### 5. Соответствие AppSettings протоколу ObservableObject
 - В `AppSettings.swift` добавлен `import Combine`, чтобы протокол `ObservableObject` был однозначно виден при использовании типа в других файлах (например, `@ObservedObject var settings: AppSettings`).
+
+#### 6. Кнопка «Моё местоположение» в MapLocationView
+- **Было:** Создавался новый экземпляр `LocationManager()`, у которого не запрашивались права и не запускались обновления — `currentLocation` почти всегда `nil`, кнопка не работала.
+- **Стало:** В `MapLocationView` передаётся общий `LocationManager` из `SettingsView` (`MapLocationView(settings: settings, locationManager: locationManager)`), используется его `currentLocation`.
 
 ---
 
