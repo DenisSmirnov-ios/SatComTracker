@@ -18,13 +18,12 @@ struct Satellite: Identifiable, Codable {
     var velocity: Double
     var timestamp: Date
     var isError: Bool
-    var rxFrequency: String = ""
-    var txFrequency: String = ""
     
     var isVisible: Bool {
         elevation >= 0
     }
 }
+
 struct CachedData: Codable {
     let satellites: [Satellite]
     let timestamp: Date
@@ -62,20 +61,37 @@ struct SatellitePositionsResponse: Codable {
     }
 }
 
-// MARK: - 💾 Хранилище частот
+// MARK: - 💾 Хранилище частот (Обновлённое - множественные каналы)
 
 class FrequencyStore: ObservableObject {
     static let shared = FrequencyStore()
     
     @Published var frequencies: [Int: SatelliteFrequencies] = [:]
     
+    struct CommunicationChannel: Codable, Identifiable {
+        let id: UUID
+        var name: String
+        var rxFrequency: String
+        var txFrequency: String
+        var notes: String
+        var createdAt: Date
+        
+        init(id: UUID = UUID(), name: String = "", rxFrequency: String = "", txFrequency: String = "", notes: String = "", createdAt: Date = Date()) {
+            self.id = id
+            self.name = name
+            self.rxFrequency = rxFrequency
+            self.txFrequency = txFrequency
+            self.notes = notes
+            self.createdAt = createdAt
+        }
+    }
+    
     struct SatelliteFrequencies: Codable {
-        var rxFrequency: String = ""
-        var txFrequency: String = ""
-        var polarization: String = ""
-        var symbolRate: String = ""
-        var fec: String = ""
-        var notes: String = ""
+        var channels: [CommunicationChannel]
+        
+        init(channels: [CommunicationChannel] = []) {
+            self.channels = channels
+        }
     }
     
     private let storageKey = "satelliteFrequencies"
@@ -88,6 +104,7 @@ class FrequencyStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let decoded = try? JSONDecoder().decode([Int: SatelliteFrequencies].self, from: data) {
             frequencies = decoded
+            objectWillChange.send()
         }
     }
     
@@ -101,6 +118,26 @@ class FrequencyStore: ObservableObject {
     
     func getFrequencies(for satId: Int) -> SatelliteFrequencies {
         return frequencies[satId] ?? SatelliteFrequencies()
+    }
+    
+    func addChannel(for satId: Int, channel: CommunicationChannel) {
+        var freqs = getFrequencies(for: satId)
+        freqs.channels.append(channel)
+        saveFrequencies(for: satId, frequencies: freqs)
+    }
+    
+    func updateChannel(for satId: Int, channel: CommunicationChannel) {
+        var freqs = getFrequencies(for: satId)
+        if let index = freqs.channels.firstIndex(where: { $0.id == channel.id }) {
+            freqs.channels[index] = channel
+            saveFrequencies(for: satId, frequencies: freqs)
+        }
+    }
+    
+    func deleteChannel(for satId: Int, channelId: UUID) {
+        var freqs = getFrequencies(for: satId)
+        freqs.channels.removeAll { $0.id == channelId }
+        saveFrequencies(for: satId, frequencies: freqs)
     }
     
     func clearFrequencies() {
@@ -390,7 +427,7 @@ class SatelliteAPI: ObservableObject {
                     satLat: pos.satlatitude, satLon: pos.satlongitude, satAlt: pos.sataltitude
                 )
                 
-                var satellite = Satellite(
+                results.append(Satellite(
                     id: result.info.satid,
                     name: result.info.satname,
                     azimuth: pos.azimuth,
@@ -399,13 +436,7 @@ class SatelliteAPI: ObservableObject {
                     velocity: 27600,
                     timestamp: Date(timeIntervalSince1970: pos.timestamp),
                     isError: false
-                )
-                
-                let savedFreqs = FrequencyStore.shared.getFrequencies(for: result.info.satid)
-                satellite.rxFrequency = savedFreqs.rxFrequency
-                satellite.txFrequency = savedFreqs.txFrequency
-                
-                results.append(satellite)
+                ))
                 
             } catch {
                 results.append(createErrorSatellite(id: noradID, message: error.localizedDescription))
@@ -667,37 +698,180 @@ struct SatelliteRow: View {
     }
 }
 
-// ✅ Экран редактирования частот
+// ✅ Экран редактирования каналов связи (Обновлённый)
 struct FrequencyEditView: View {
     let satelliteId: Int
     let satelliteName: String
     @ObservedObject var frequencyStore = FrequencyStore.shared
     @Environment(\.dismiss) var dismiss
     
-    @State private var rxFrequency: String = ""
-    @State private var txFrequency: String = ""
-    @State private var polarization: String = ""
-    @State private var symbolRate: String = ""
-    @State private var fec: String = ""
-    @State private var notes: String = ""
+    @State private var channels: [FrequencyStore.CommunicationChannel] = []
+    @State private var showingAddChannel = false
+    @State private var editingChannel: FrequencyStore.CommunicationChannel?
     
     init(satelliteId: Int, satelliteName: String) {
         self.satelliteId = satelliteId
         self.satelliteName = satelliteName
+    }
+    
+    var body: some View {
+        NavigationView {
+            List {
+                Section(header: Text("📡 Каналы связи (\(channels.count))")) {
+                    if channels.isEmpty {
+                        Text("Нет сохранённых каналов")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(channels) { channel in
+                            ChannelRow(channel: channel)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    editingChannel = channel
+                                }
+                        }
+                        .onDelete { offsets in
+                            for index in offsets {
+                                frequencyStore.deleteChannel(for: satelliteId, channelId: channels[index].id)
+                            }
+                            channels = frequencyStore.getFrequencies(for: satelliteId).channels
+                        }
+                    }
+                }
+                
+                Section {
+                    Button(action: { showingAddChannel = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("Добавить канал")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle(satelliteName)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Готово") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: {
+                        frequencyStore.clearFrequencies()
+                        channels = []
+                    }) {
+                        Text("Очистить все")
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAddChannel) {
+                ChannelEditView(satelliteId: satelliteId, channel: nil, onSave: {
+                    channels = frequencyStore.getFrequencies(for: satelliteId).channels
+                })
+            }
+            .sheet(item: $editingChannel) { channel in
+                ChannelEditView(satelliteId: satelliteId, channel: channel, onSave: {
+                    channels = frequencyStore.getFrequencies(for: satelliteId).channels
+                })
+            }
+            .onAppear {
+                channels = frequencyStore.getFrequencies(for: satelliteId).channels
+            }
+        }
+    }
+}
+
+// ✅ Строка канала связи
+struct ChannelRow: View {
+    let channel: FrequencyStore.CommunicationChannel
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "radio")
+                    .foregroundColor(.blue)
+                Text(channel.name.isEmpty ? "Без названия" : channel.name)
+                    .fontWeight(.semibold)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+            
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RX")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Text(channel.rxFrequency.isEmpty ? "—" : channel.rxFrequency)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.medium)
+                }
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("TX")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                    Text(channel.txFrequency.isEmpty ? "—" : channel.txFrequency)
+                        .font(.system(.caption, design: .monospaced))
+                        .fontWeight(.medium)
+                }
+            }
+            .padding(.vertical, 2)
+            
+            if !channel.notes.isEmpty {
+                Text(channel.notes)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+// ✅ Экран редактирования канала
+struct ChannelEditView: View {
+    let satelliteId: Int
+    let channel: FrequencyStore.CommunicationChannel?
+    let onSave: () -> Void
+    
+    @Environment(\.dismiss) var dismiss
+    @ObservedObject var frequencyStore = FrequencyStore.shared
+    
+    @State private var name: String = ""
+    @State private var rxFrequency: String = ""
+    @State private var txFrequency: String = ""
+    @State private var notes: String = ""
+    
+    init(satelliteId: Int, channel: FrequencyStore.CommunicationChannel?, onSave: @escaping () -> Void) {
+        self.satelliteId = satelliteId
+        self.channel = channel
+        self.onSave = onSave
         
-        let freqs = FrequencyStore.shared.getFrequencies(for: satelliteId)
-        _rxFrequency = State(initialValue: freqs.rxFrequency)
-        _txFrequency = State(initialValue: freqs.txFrequency)
-        _polarization = State(initialValue: freqs.polarization)
-        _symbolRate = State(initialValue: freqs.symbolRate)
-        _fec = State(initialValue: freqs.fec)
-        _notes = State(initialValue: freqs.notes)
+        if let channel = channel {
+            _name = State(initialValue: channel.name)
+            _rxFrequency = State(initialValue: channel.rxFrequency)
+            _txFrequency = State(initialValue: channel.txFrequency)
+            _notes = State(initialValue: channel.notes)
+        }
     }
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("📡 Частоты связи")) {
+                Section(header: Text("📝 Название канала")) {
+                    TextField("Например: Основной, Резервный, Данные", text: $name)
+                }
+                
+                Section(header: Text("📡 Частоты")) {
                     HStack {
                         Text("RX (Downlink):")
                             .foregroundColor(.secondary)
@@ -715,72 +889,60 @@ struct FrequencyEditView: View {
                     }
                 }
                 
-                Section(header: Text("📊 Параметры транспондера")) {
-                    Picker("Поляризация", selection: $polarization) {
-                        Text("Не указано").tag("")
-                        Text("H (Горизонтальная)").tag("H")
-                        Text("V (Вертикальная)").tag("V")
-                        Text("L (Левая)").tag("L")
-                        Text("R (Правая)").tag("R")
-                    }
-                    
-                    HStack {
-                        Text("Symbol Rate:")
-                            .foregroundColor(.secondary)
-                        TextField("27500 kS/s", text: $symbolRate)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    
-                    HStack {
-                        Text("FEC:")
-                            .foregroundColor(.secondary)
-                        TextField("3/4", text: $fec)
-                            .keyboardType(.asciiCapable)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-                
                 Section(header: Text("📝 Заметки")) {
                     TextEditor(text: $notes)
-                        .frame(minHeight: 100)
+                        .frame(minHeight: 80)
                 }
                 
                 Section {
-                    Button("💾 Сохранить") {
-                        let freqs = FrequencyStore.SatelliteFrequencies(
-                            rxFrequency: rxFrequency,
-                            txFrequency: txFrequency,
-                            polarization: polarization,
-                            symbolRate: symbolRate,
-                            fec: fec,
-                            notes: notes
-                        )
-                        frequencyStore.saveFrequencies(for: satelliteId, frequencies: freqs)
-                        dismiss()
+                    Button(channel == nil ? "💾 Добавить канал" : "💾 Сохранить изменения") {
+                        saveChannel()
                     }
                     .frame(maxWidth: .infinity)
+                    .disabled(name.isEmpty && rxFrequency.isEmpty && txFrequency.isEmpty)
                     
-                    Button("🗑 Очистить", role: .destructive) {
-                        rxFrequency = ""
-                        txFrequency = ""
-                        polarization = ""
-                        symbolRate = ""
-                        fec = ""
-                        notes = ""
+                    if channel != nil {
+                        Button("🗑 Удалить канал", role: .destructive) {
+                            if let channel = channel {
+                                frequencyStore.deleteChannel(for: satelliteId, channelId: channel.id)
+                                onSave()
+                                dismiss()
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
-            .navigationTitle(satelliteName)
+            .navigationTitle(channel == nil ? "Новый канал" : "Редактировать канал")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Готово") {
+                    Button("Отмена") {
                         dismiss()
                     }
                 }
             }
         }
+    }
+    
+    private func saveChannel() {
+        if let existingChannel = channel {
+            var updatedChannel = existingChannel
+            updatedChannel.name = name
+            updatedChannel.rxFrequency = rxFrequency
+            updatedChannel.txFrequency = txFrequency
+            updatedChannel.notes = notes
+            frequencyStore.updateChannel(for: satelliteId, channel: updatedChannel)
+        } else {
+            let newChannel = FrequencyStore.CommunicationChannel(
+                name: name,
+                rxFrequency: rxFrequency,
+                txFrequency: txFrequency,
+                notes: notes
+            )
+            frequencyStore.addChannel(for: satelliteId, channel: newChannel)
+        }
+        onSave()
+        dismiss()
     }
 }
 
@@ -882,10 +1044,6 @@ struct SatelliteDetailView: View {
         .frame(maxWidth: .infinity)
         .background(Color.red.opacity(0.1))
         .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.red.opacity(0.3), lineWidth: 1)
-        )
     }
     
     private var errorSection: some View {
@@ -911,7 +1069,7 @@ struct SatelliteDetailView: View {
             if satellite.isVisible {
                 VStack(spacing: 12) {
                     HStack {
-                        Text("🧭 Магнитный компас")
+                        Text("🧭 Как найти спутник")
                             .font(.headline)
                         Spacer()
                         Image(systemName: compassManager.isCalibrating ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
@@ -923,23 +1081,102 @@ struct SatelliteDetailView: View {
                         compassManager: compassManager
                     )
                     
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("📍 Пошаговая инструкция:")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("1.")
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.blue)
+                                    Text("Встаньте лицом на Север")
+                                }
+                                
+                                HStack {
+                                    Text("2.")
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.blue)
+                                    Text(String(format: "Повернитесь вправо на %.0f°", satellite.azimuth))
+                                }
+                                
+                                HStack {
+                                    Text("3.")
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.blue)
+                                    Text(String(format: "Поднимите взгляд на %.0f°", satellite.elevation))
+                                }
+                            }
+                            
+                            Spacer()
+                            
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Label("Азимут", systemImage: "compass")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.0f°", satellite.azimuth))
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.blue)
+                                
+                                Label("Элевация", systemImage: "angle")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.0f°", satellite.elevation))
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.green)
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "iphone")
+                                    .foregroundColor(.blue)
+                                Text("Держите телефон горизонтально для точного компаса")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack(spacing: 8) {
+                                Image(systemName: "location.fill")
+                                    .foregroundColor(.green)
+                                Text("Красная стрелка показывает направление на спутник")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            HStack(spacing: 8) {
+                                Image(systemName: "eye")
+                                    .foregroundColor(.purple)
+                                Text("Спутник будет в точке, куда указывает стрелка")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(8)
+                        .background(Color.blue.opacity(0.05))
+                        .cornerRadius(8)
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                    .cornerRadius(12)
+                    .shadow(color: .black.opacity(0.05), radius: 3, y: 2)
+                    
                     VStack(spacing: 4) {
                         Text(String(format: """
-                        Азимут спутника: %.1f°
-                        Магнитный курс: %.0f°
-                        Истинный курс: %.0f°
-                        Поверните на: %.0f°
-                        Точность: %.0f°
+                        Текущий курс: %.0f° | Нужно повернуть: %.0f°
                         """,
-                            satellite.azimuth,
                             compassManager.magneticHeading,
-                            compassManager.trueHeading,
-                            (satellite.azimuth - compassManager.magneticHeading + 360).truncatingRemainder(dividingBy: 360),
-                            compassManager.headingAccuracy >= 0 ? compassManager.headingAccuracy : 0
+                            (satellite.azimuth - compassManager.magneticHeading + 360).truncatingRemainder(dividingBy: 360)
                         ))
                         .font(.caption)
                         .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
                         
                         if compassManager.headingAccuracy > 30 {
                             Text("⚠️ Откалибруйте компас (восьмёрка)")
@@ -955,34 +1192,10 @@ struct SatelliteDetailView: View {
             }
             
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                DataCard(title: "Элевация",
-                        value: String(format: "%.1f°", satellite.elevation),
-                        icon: "angle",
-                        isNegative: !satellite.isVisible)
+                DataCard(title: "Элевация", value: String(format: "%.1f°", satellite.elevation), icon: "angle", isNegative: !satellite.isVisible)
                 DataCard(title: "Расстояние", value: String(format: "%.0f км", satellite.distanceKm), icon: "ruler")
                 DataCard(title: "Скорость", value: String(format: "%.0f км/ч", satellite.velocity), icon: "gauge")
                 DataCard(title: "Время данных", value: timeFormatter.string(from: satellite.timestamp), icon: "clock")
-            }
-            
-            if satellite.isVisible {
-                VStack(spacing: 12) {
-                    Image(systemName: "hand.point.up.left")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                    Text(String(format: """
-                    Как найти:
-                    1. Встаньте лицом на Север
-                    2. Повернитесь вправо на %.0f°
-                    3. Поднимите голову на %.0f° элевации
-                    """, satellite.azimuth, satellite.elevation))
-                        .font(.callout)
-                        .multilineTextAlignment(.center)
-                        .foregroundColor(.secondary)
-                }
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.blue.opacity(0.1))
-                .cornerRadius(12)
             }
         }
         .padding()
@@ -993,7 +1206,7 @@ struct SatelliteDetailView: View {
     private var frequencySection: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("📡 Частоты радиосвязи")
+                Text("📡 Каналы связи")
                     .font(.headline)
                 Spacer()
                 Button(action: { showFrequencyEdit = true }) {
@@ -1004,39 +1217,36 @@ struct SatelliteDetailView: View {
             
             let freqs = frequencyStore.getFrequencies(for: satellite.id)
             
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                FrequencyCard(title: "RX (Downlink)", value: freqs.rxFrequency.isEmpty ? "Не указано" : freqs.rxFrequency, icon: "arrow.down.circle")
-                FrequencyCard(title: "TX (Uplink)", value: freqs.txFrequency.isEmpty ? "Не указано" : freqs.txFrequency, icon: "arrow.up.circle")
-                FrequencyCard(title: "Поляризация", value: freqs.polarization.isEmpty ? "Не указано" : freqs.polarization, icon: "waveform.path.ecg")
-                FrequencyCard(title: "Symbol Rate", value: freqs.symbolRate.isEmpty ? "Не указано" : freqs.symbolRate, icon: "speedometer")
-            }
-            
-            if !freqs.fec.isEmpty || !freqs.notes.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    if !freqs.fec.isEmpty {
-                        HStack {
-                            Text("FEC:")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text(freqs.fec)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                        }
-                    }
-                    
-                    if !freqs.notes.isEmpty {
-                        Text("📝 Заметки:")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(freqs.notes)
-                            .font(.caption)
-                            .foregroundColor(.primary)
-                    }
+            if freqs.channels.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "antenna.radiowaves.left.and.right.slash")
+                        .font(.system(size: 40))
+                        .foregroundColor(.gray)
+                    Text("Нет сохранённых каналов")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                    Text("Нажмите на иконку антенны чтобы добавить RX/TX частоты")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
                 }
                 .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity)
                 .background(Color.gray.opacity(0.1))
-                .cornerRadius(8)
+                .cornerRadius(12)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(freqs.channels.prefix(3)) { channel in
+                        MiniChannelCard(channel: channel)
+                    }
+                    
+                    if freqs.channels.count > 3 {
+                        Text("Ещё каналов: \(freqs.channels.count - 3)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                    }
+                }
             }
         }
         .padding()
@@ -1046,30 +1256,30 @@ struct SatelliteDetailView: View {
     }
 }
 
-struct FrequencyCard: View {
-    let title: String
-    let value: String
-    let icon: String
+// ✅ Мини-карточка канала
+struct MiniChannelCard: View {
+    let channel: FrequencyStore.CommunicationChannel
     
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundColor(.accentColor)
-            Text(value)
-                .font(.headline)
-                .monospacedDigit()
-                .lineLimit(1)
-            Text(title)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(channel.name.isEmpty ? "Без названия" : channel.name)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                HStack(spacing: 8) {
+                    Label(channel.rxFrequency.isEmpty ? "RX: —" : "RX: \(channel.rxFrequency)", systemImage: "arrow.down.circle")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                    Label(channel.txFrequency.isEmpty ? "TX: —" : "TX: \(channel.txFrequency)", systemImage: "arrow.up.circle")
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+            }
+            Spacer()
         }
-        .frame(maxWidth: .infinity)
-        .padding(12)
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: .black.opacity(0.05), radius: 3, y: 2)
+        .padding(10)
+        .background(Color.gray.opacity(0.1))
+        .cornerRadius(8)
     }
 }
 
@@ -1228,12 +1438,6 @@ struct SettingsView: View {
             } message: {
                 Text("""
                 Бесплатный тариф N2YO имеет лимит **100 запросов в час**.
-                
-                При интервале **\(tempRefreshInterval / 60) мин** и **\(selectedCount) спутниках**:
-                • За одно обновление: \(selectedCount) запросов
-                • В час: \(selectedCount * 3600 / tempRefreshInterval) запросов
-                
-                Рекомендуется интервал **1 час или больше**.
                 """)
             }
             .alert("Сохранить изменения?", isPresented: $showDiscardAlert) {
@@ -1245,7 +1449,7 @@ struct SettingsView: View {
                     discardChanges()
                 }
             } message: {
-                Text("У вас есть несохранённые изменения. Хотите сохранить их перед выходом?")
+                Text("У вас есть несохранённые изменения.")
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -1264,7 +1468,7 @@ struct SettingsView: View {
     
     private var apiKeySection: some View {
         Section {
-            TextField("Введите API ключ (XXXX-XXXX-XXXX)", text: $tempAPIKey)
+            TextField("Введите API ключ", text: $tempAPIKey)
                 .textContentType(.password)
                 .autocapitalization(.none)
         } header: {
@@ -1287,7 +1491,6 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                     TextField("55.7558", text: $tempManualLatitude)
                         .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
                 }
                 
                 HStack {
@@ -1295,83 +1498,19 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                     TextField("37.6173", text: $tempManualLongitude)
                         .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                }
-                
-                if !isValidCoordinates {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
-                        Text("Некорректные координаты")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                }
-                
-                HStack(spacing: 8) {
-                    Button("Москва") { setCoordinates(lat: "55.7558", lon: "37.6173") }
-                    Button("СПб") { setCoordinates(lat: "59.9343", lon: "30.3351") }
-                    Button("Екб") { setCoordinates(lat: "56.8389", lon: "60.6057") }
-                }
-                .buttonStyle(.bordered)
-                .font(.caption)
-            } else {
-                HStack {
-                    Image(systemName: locationManager.authorizationStatus == .authorizedWhenInUse ||
-                                     locationManager.authorizationStatus == .authorizedAlways ?
-                                     "location.fill" : "location.slash")
-                        .foregroundColor(locationManager.authorizationStatus == .authorizedWhenInUse ||
-                                        locationManager.authorizationStatus == .authorizedAlways ? .green : .red)
-                    Text(locationManager.authorizationStatus == .authorizedWhenInUse ||
-                         locationManager.authorizationStatus == .authorizedAlways ?
-                         "GPS активен" : "GPS недоступен")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
                 }
             }
         } header: {
             Text("📍 Местоположение")
         } footer: {
-            Text(tempUseManualLocation ?
-                 "Введите координаты в десятичных градусах. Широта: -90 до 90, Долгота: -180 до 180" :
-                 "Используются координаты от GPS. Разрешите доступ к геопозиции в настройках.")
+            Text(tempUseManualLocation ? "Ручные координаты" : "GPS координаты")
         }
-    }
-    
-    private var isValidCoordinates: Bool {
-        guard let lat = Double(tempManualLatitude), let lon = Double(tempManualLongitude) else {
-            return false
-        }
-        return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
-    }
-    
-    private func setCoordinates(lat: String, lon: String) {
-        tempManualLatitude = lat
-        tempManualLongitude = lon
     }
     
     private var satellitesSection: some View {
         Section {
             TextField("Поиск спутника...", text: $searchText)
                 .textFieldStyle(.roundedBorder)
-            
-            HStack {
-                Text("Выбрано: \(selectedCount) из \(SatcomReference.allSatellites.count + settings.customIDs.count)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button(selectedCount == SatcomReference.allSatellites.count + settings.customIDs.count ? "Очистить все" : "Выбрать все") {
-                    if selectedCount == SatcomReference.allSatellites.count + settings.customIDs.count {
-                        settings.clearAllSatellites()
-                        settings.clearCustomIDs()
-                    } else {
-                        settings.selectAllSatellites()
-                    }
-                }
-                .font(.caption)
-                .foregroundColor(.blue)
-            }
-            .padding(.vertical, 4)
             
             ForEach(filteredSatellites) { sat in
                 SatcomToggleRow(
@@ -1382,18 +1521,10 @@ struct SettingsView: View {
                     }
                 )
             }
-            
-            if filteredSatellites.isEmpty {
-                Text("Ничего не найдено")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-            }
         } header: {
-            Text("📡 Спутники SATCOM (\(SatcomReference.allSatellites.count))")
+            Text("📡 Спутники")
         } footer: {
-            Text("Нажмите на спутник чтобы добавить/удалить из списка отслеживания.")
+            Text("Нажмите чтобы добавить/удалить")
         }
     }
     
@@ -1410,29 +1541,10 @@ struct SettingsView: View {
                 }
                 .disabled(newCustomID.isEmpty)
             }
-            
-            if !settings.customIDs.isEmpty {
-                ForEach(settings.customIDs, id: \.self) { id in
-                    HStack {
-                        Text("ID: \(id)")
-                            .font(.headline)
-                        Spacer()
-                        Button("Удалить") {
-                            settings.removeCustomID(id)
-                        }
-                        .foregroundColor(.red)
-                    }
-                }
-                .onDelete { offsets in
-                    var ids = settings.customIDs
-                    ids.remove(atOffsets: offsets)
-                    settings.customIDs = ids
-                }
-            }
         } header: {
-            Text("➕ Пользовательские NORAD ID")
+            Text("➕ Пользовательские ID")
         } footer: {
-            Text("Добавьте свои спутники по NORAD ID. Они будут отслеживаться вместе с основными.")
+            Text("Добавьте свои спутники")
         }
     }
     
@@ -1442,23 +1554,13 @@ struct SettingsView: View {
                 Text("5 минут").tag(300)
                 Text("15 минут").tag(900)
                 Text("30 минут").tag(1800)
-                Text("1 час (рекомендуется)").tag(3600)
+                Text("1 час").tag(3600)
                 Text("2 часа").tag(7200)
                 Text("4 часа").tag(14400)
             }
             .pickerStyle(.menu)
-            
-            if tempRefreshInterval < 3600 {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.orange)
-                    Text("Частые запросы могут превысить лимит API!")
-                        .font(.caption)
-                        .foregroundColor(.orange)
-                }
-            }
         } header: {
-            Text("🔄 Частота обновления")
+            Text("🔄 Обновление")
         } footer: {
             Text(warningText)
         }
@@ -1466,7 +1568,7 @@ struct SettingsView: View {
     
     private var actionSection: some View {
         Section {
-            Button(hasUnsavedChanges ? "Сохранить изменения*" : "Сохранить") {
+            Button(hasUnsavedChanges ? "Сохранить*" : "Сохранить") {
                 if tempRefreshInterval != settings.refreshInterval && tempRefreshInterval < 3600 {
                     showWarning = true
                 } else {
@@ -1476,29 +1578,22 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity)
             .disabled(tempAPIKey.isEmpty)
             
-            Button("Очистить кеш", role: .destructive) {
-                UserDefaults.standard.removeObject(forKey: "satelliteCache")
-                UserDefaults.standard.removeObject(forKey: "cacheTimestamp")
-                UserDefaults.standard.removeObject(forKey: "cacheLocation")
-            }
-            .frame(maxWidth: .infinity)
-            
             Button("🗑 Очистить все частоты", role: .destructive) {
                 FrequencyStore.shared.clearFrequencies()
             }
             .frame(maxWidth: .infinity)
         } header: {
-            Text("📡 Частоты")
+            Text("💾 Частоты")
         } footer: {
-            Text("Удалить все сохранённые RX/TX частоты для спутников")
+            Text("Удалить все каналы связи")
         }
     }
     
     private var warningText: String {
         if tempRefreshInterval < 3600 {
-            return "⚠️ При интервале менее 1 часа вы можете превысить лимит API (100 запросов/час)"
+            return "⚠️ При интервале менее 1 часа вы можете превысить лимит API"
         }
-        return "Данные кешируются и обновляются только по истечении интервала"
+        return "Данные кешируются"
     }
     
     private func saveSettings() {
@@ -1599,10 +1694,6 @@ struct ContentView: View {
             Text("Требуется настройка")
                 .font(.title2)
                 .fontWeight(.bold)
-            Text("Введите API ключ для отслеживания SATCOM спутников")
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
             Button("Перейти в настройки") {
                 showSettings = true
             }
@@ -1618,10 +1709,6 @@ struct ContentView: View {
                 .foregroundColor(.gray)
             Text("Нужен доступ к геопозиции")
                 .font(.headline)
-            Text("Или включите ручные координаты в настройках")
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
             HStack(spacing: 16) {
                 Button("Разрешить GPS") {
                     locationManager.requestLocation()
@@ -1641,21 +1728,6 @@ struct ContentView: View {
             if let lastUpdate = apiService.lastUpdateTime {
                 infoBar(lastUpdate: lastUpdate)
             }
-            
-            HStack {
-                Image(systemName: settings.useManualLocation ? "location.slash" : "location.fill")
-                    .font(.caption)
-                    .foregroundColor(settings.useManualLocation ? .orange : .green)
-                Text(settings.useManualLocation ?
-                     "Ручные координаты: \(settings.manualLatitude), \(settings.manualLongitude)" :
-                     "GPS: \(locationManager.currentLocation?.coordinate.latitude.description ?? "0"), \(locationManager.currentLocation?.coordinate.longitude.description ?? "0")")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 4)
-            .background(Color.gray.opacity(0.1))
             
             if !apiService.satellites.isEmpty {
                 visibilityIndicator
@@ -1680,7 +1752,6 @@ struct ContentView: View {
                 Button(action: { Task { await refreshData(force: true) } }) {
                     Image(systemName: "arrow.clockwise")
                         .rotationEffect(apiService.isLoading ? .degrees(360) : .degrees(0))
-                        .animation(apiService.isLoading ? .linear(duration: 1) : .default, value: apiService.isLoading)
                 }
                 .disabled(apiService.isLoading)
             }
@@ -1695,8 +1766,6 @@ struct ContentView: View {
                 Text("\(visibleCount)")
                     .fontWeight(.bold)
                     .foregroundColor(.green)
-                Text("видимых")
-                    .foregroundColor(.secondary)
             }
             
             HStack(spacing: 4) {
@@ -1705,8 +1774,6 @@ struct ContentView: View {
                 Text("\(hiddenCount)")
                     .fontWeight(.bold)
                     .foregroundColor(.red)
-                Text("ниже горизонта")
-                    .foregroundColor(.secondary)
             }
         }
         .font(.caption)
@@ -1719,17 +1786,11 @@ struct ContentView: View {
         HStack {
             Image(systemName: "clock")
                 .font(.caption)
-                .foregroundColor(.secondary)
-            Text("Обновлено: \(timeFormatter.string(from: lastUpdate))")
+            Text("Обновлено: \(lastUpdate, formatter: timeFormatter)")
                 .font(.caption)
-                .foregroundColor(.secondary)
             Spacer()
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.caption)
-                .foregroundColor(.secondary)
             Text(settings.refreshIntervalText)
                 .font(.caption)
-                .foregroundColor(.secondary)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -1740,20 +1801,6 @@ struct ContentView: View {
         List {
             if let error = apiService.errorMessage {
                 ErrorRow(message: error, onRetry: { Task { await refreshData(force: true) } })
-            }
-            
-            if visibleCount > 0 && hiddenCount > 0 {
-                Section {
-                    EmptyView()
-                } header: {
-                    HStack {
-                        Image(systemName: "eye.slash.fill")
-                            .foregroundColor(.red)
-                        Text("Ниже горизонта (\(hiddenCount))")
-                            .foregroundColor(.red)
-                            .fontWeight(.semibold)
-                    }
-                }
             }
             
             ForEach(apiService.satellites) { satellite in
@@ -1806,7 +1853,6 @@ struct ContentView: View {
     }
 }
 
-// Вспомогательные Views
 struct ErrorRow: View {
     let message: String
     let onRetry: () -> Void
@@ -1816,21 +1862,10 @@ struct ErrorRow: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.orange)
                 Text("Ошибка").fontWeight(.bold)
             }
-            Text(message).font(.caption).foregroundColor(.secondary).textSelection(.enabled)
+            Text(message).font(.caption).foregroundColor(.secondary)
             Button("Повторить", action: onRetry).buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity).padding().listRowBackground(Color.clear)
-    }
-}
-
-struct EmptyStateView: View {
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "dish").font(.system(size: 48)).foregroundColor(.gray)
-            Text("Нет данных").font(.headline)
-            Text("Нажмите кнопку обновления").font(.subheadline).foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity).padding()
     }
 }
 
