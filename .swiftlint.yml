@@ -1,0 +1,21 @@
+disabled_rules:
+  - trailing_whitespace
+  - line_length
+
+included:
+  - SatComTracker
+
+opt_in_rules:
+  - empty_count
+  - unused_import
+
+identifier_name:
+  min_length: 2
+  max_length: 40
+  excluded:
+    - id
+    - x
+    - y
+
+reporter: "xcode"
+
