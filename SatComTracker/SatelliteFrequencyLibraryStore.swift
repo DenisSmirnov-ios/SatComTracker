@@ -18,6 +18,19 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         let duplicateRows: Int
         let satellitesAffected: Int
     }
+
+    struct RemoteSyncSummary {
+        enum Mode {
+            case bootstrap
+            case updated
+            case upToDate
+        }
+
+        let mode: Mode
+        let version: String?
+        let satellitesCount: Int
+        let rowsCount: Int
+    }
     
     @Published private(set) var overrideByNorad: [Int: [SatelliteFrequencyItem]]?
     @Published private(set) var mergedByNorad: [Int: [SatelliteFrequencyItem]] = [:]
@@ -25,9 +38,11 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     private struct PersistedState: Codable {
         var overrideByNorad: [Int: [SatelliteFrequencyItem]]?
         var mergedByNorad: [Int: [SatelliteFrequencyItem]]
+        var remoteVersion: String?
     }
     
     private let storageKey = "satelliteFrequencyLibraryState"
+    private var remoteVersion: String?
     
     private init() {
         load()
@@ -37,6 +52,13 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         let base = (overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad)[satellite.id] ?? []
         let merged = mergedByNorad[satellite.id] ?? []
         return deduplicated(base + merged)
+    }
+
+    func hasAnyData() -> Bool {
+        let base = overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad
+        let hasBase = base.values.contains { !$0.isEmpty }
+        let hasMerged = mergedByNorad.values.contains { !$0.isEmpty }
+        return hasBase || hasMerged
     }
     
     @discardableResult
@@ -104,13 +126,154 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     func clearAllData() {
         overrideByNorad = [:]
         mergedByNorad = [:]
+        remoteVersion = nil
         save()
     }
 
     func restoreBuiltInData() {
         overrideByNorad = nil
         mergedByNorad = [:]
+        remoteVersion = nil
         save()
+    }
+
+    @MainActor
+    func syncFromGitHub(databaseURLString: String, versionURLString: String?) async throws -> RemoteSyncSummary {
+        guard let remoteDatabaseURL = URL(string: databaseURLString),
+              !databaseURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NSError(
+                domain: "FrequencyRemoteSync",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Некорректный URL файла частот"]
+            )
+        }
+
+        let remoteVersionURL: URL?
+        if let versionURLString, !versionURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            remoteVersionURL = URL(string: versionURLString)
+        } else {
+            remoteVersionURL = nil
+        }
+
+        let bootstrap = !hasAnyData()
+
+        if bootstrap {
+            let (version, downloaded) = try await downloadRemoteDataset(
+                remoteDatabaseURL: remoteDatabaseURL,
+                remoteVersionURL: remoteVersionURL
+            )
+            overrideByNorad = downloaded.byNorad
+            remoteVersion = version
+            save()
+            return RemoteSyncSummary(
+                mode: .bootstrap,
+                version: version,
+                satellitesCount: downloaded.byNorad.count,
+                rowsCount: downloaded.parsedRows
+            )
+        }
+
+        let remoteVersion = try await fetchRemoteVersion(
+            remoteDatabaseURL: remoteDatabaseURL,
+            remoteVersionURL: remoteVersionURL
+        )
+        guard shouldUpdate(localVersion: self.remoteVersion, remoteVersion: remoteVersion) else {
+            let current = overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad
+            let rows = current.values.reduce(0) { $0 + $1.count }
+            return RemoteSyncSummary(
+                mode: .upToDate,
+                version: self.remoteVersion,
+                satellitesCount: current.count,
+                rowsCount: rows
+            )
+        }
+
+        let (_, downloaded) = try await downloadRemoteDataset(
+            remoteDatabaseURL: remoteDatabaseURL,
+            remoteVersionURL: remoteVersionURL,
+            forceVersion: remoteVersion
+        )
+        overrideByNorad = downloaded.byNorad
+        self.remoteVersion = remoteVersion
+        save()
+        return RemoteSyncSummary(
+            mode: .updated,
+            version: remoteVersion,
+            satellitesCount: downloaded.byNorad.count,
+            rowsCount: downloaded.parsedRows
+        )
+    }
+
+    private func shouldUpdate(localVersion: String?, remoteVersion: String) -> Bool {
+        guard let localVersion, !localVersion.isEmpty else { return true }
+        if let remoteInt = Int(remoteVersion), let localInt = Int(localVersion) {
+            return remoteInt > localInt
+        }
+        let iso = ISO8601DateFormatter()
+        if let remoteDate = iso.date(from: remoteVersion),
+           let localDate = iso.date(from: localVersion) {
+            return remoteDate > localDate
+        }
+        return remoteVersion != localVersion
+    }
+
+    private func fetchRemoteVersion(remoteDatabaseURL: URL, remoteVersionURL: URL?) async throws -> String {
+        let decoder = JSONDecoder()
+
+        if let remoteVersionURL,
+           let (data, _) = try? await URLSession.shared.data(from: remoteVersionURL),
+           let json = try? decoder.decode([String: String].self, from: data) {
+            if let v = json["version"], !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return v
+            }
+            if let v = json["dataVersion"], !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return v
+            }
+            if let v = json["updatedAt"], !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return v
+            }
+        }
+
+        var request = URLRequest(url: remoteDatabaseURL)
+        request.httpMethod = "HEAD"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            if let etag = http.value(forHTTPHeaderField: "ETag"), !etag.isEmpty {
+                return etag
+            }
+            if let modified = http.value(forHTTPHeaderField: "Last-Modified"), !modified.isEmpty {
+                return modified
+            }
+        }
+
+        return String(Int(Date().timeIntervalSince1970))
+    }
+
+    private func downloadRemoteDataset(
+        remoteDatabaseURL: URL,
+        remoteVersionURL: URL?,
+        forceVersion: String? = nil
+    ) async throws -> (String, FrequencyImportParser.ParsedResult) {
+        let (data, _) = try await URLSession.shared.data(from: remoteDatabaseURL)
+        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+            throw NSError(
+                domain: "FrequencyRemoteSync",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Пустой ответ от GitHub с данными частот"]
+            )
+        }
+
+        let parsed = try FrequencyImportParser.parseSatViewCSV(text: text)
+        let version: String
+        if let forceVersion {
+            version = forceVersion
+        } else {
+            version = try await fetchRemoteVersion(
+                remoteDatabaseURL: remoteDatabaseURL,
+                remoteVersionURL: remoteVersionURL
+            )
+        }
+        return (version, parsed)
     }
     
     private func deduplicated(_ items: [SatelliteFrequencyItem]) -> [SatelliteFrequencyItem] {
@@ -132,10 +295,15 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         }
         overrideByNorad = decoded.overrideByNorad
         mergedByNorad = decoded.mergedByNorad
+        remoteVersion = decoded.remoteVersion
     }
     
     private func save() {
-        let state = PersistedState(overrideByNorad: overrideByNorad, mergedByNorad: mergedByNorad)
+        let state = PersistedState(
+            overrideByNorad: overrideByNorad,
+            mergedByNorad: mergedByNorad,
+            remoteVersion: remoteVersion
+        )
         guard let encoded = try? JSONEncoder().encode(state) else { return }
         UserDefaults.standard.set(encoded, forKey: storageKey)
     }
@@ -157,6 +325,63 @@ private enum FrequencyImportParser {
             return try parsePDF(url: url)
         }
         throw ParseError.unsupportedFileFormat
+    }
+
+    static func parseSatViewCSV(text: String) throws -> ParsedResult {
+        let lines = text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else {
+            throw ParseError.invalidStructure("CSV пуст")
+        }
+
+        let header = lines[0].lowercased()
+        guard header.contains("rx"), header.contains("tx"), header.contains("norad") else {
+            throw ParseError.invalidStructure("CSV не содержит обязательные колонки")
+        }
+
+        var byNorad: [Int: [SatelliteFrequencyItem]] = [:]
+        var seen = Set<String>()
+        var parsedRows = 0
+        var duplicateRows = 0
+
+        for rawLine in lines.dropFirst() {
+            let parts = rawLine.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 5 else { continue }
+
+            let rx = parseDouble(parts[0])
+            let tx = parseDouble(parts[1])
+            let norad = parseInt(parts[4])
+            guard let norad else { continue }
+            if rx == nil && tx == nil { continue }
+
+            let spacing: Double?
+            if let rx, let tx {
+                spacing = abs(tx - rx)
+            } else {
+                spacing = nil
+            }
+
+            let item = SatelliteFrequencyItem(
+                rxMHz: rx,
+                txMHz: tx,
+                spacingMHz: spacing,
+                channelWidthKHz: nil
+            )
+
+            let key = "\(norad)#\(item.storageKey)"
+            if seen.contains(key) {
+                duplicateRows += 1
+                continue
+            }
+            seen.insert(key)
+            byNorad[norad, default: []].append(item)
+            parsedRows += 1
+        }
+
+        return ParsedResult(byNorad: byNorad, parsedRows: parsedRows, duplicateRowsInSource: duplicateRows)
     }
     
     private static func parseXLSX(url: URL) throws -> ParsedResult {

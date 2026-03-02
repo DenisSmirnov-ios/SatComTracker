@@ -19,9 +19,11 @@ struct SettingsView: View {
     @State private var showingDeleteFrequenciesConfirmSheet = false
     @State private var showingRestoreDefaultsConfirm = false
     @State private var activeDocumentPicker: DocumentPickerKind?
+    @State private var isSyncingGitHubFrequencies = false
     
     @State private var settingsChanged = false
     @State private var restoreDefaultsStatus: String?
+    @State private var githubSyncStatus: String?
 
     private enum DocumentPickerKind: Identifiable {
         case tle
@@ -255,6 +257,40 @@ struct SettingsView: View {
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
+                    TextField("URL database.csv", text: $settings.frequencyDatabaseURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.caption)
+                        .onChange(of: settings.frequencyDatabaseURL) { _ in
+                            settingsChanged = true
+                        }
+
+                    TextField("URL version.json (опционально)", text: $settings.frequencyVersionURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.caption)
+                        .onChange(of: settings.frequencyVersionURL) { _ in
+                            settingsChanged = true
+                        }
+
+                    Button {
+                        Task { await syncFrequenciesFromGitHub() }
+                    } label: {
+                        if isSyncingGitHubFrequencies {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Синхронизация с GitHub...")
+                            }
+                        } else {
+                            Text("Обновить библиотеку с GitHub")
+                        }
+                    }
+                    .disabled(isSyncingGitHubFrequencies)
+
+                    Text("Подсказка: если данные частот полностью очищены, приложение загрузит полный файл с GitHub без сравнения версий. Если данные уже есть, приложение проверит версию на GitHub и обновит кэш только при более новой версии, сохранив пользовательские добавления.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
                     Button("Импортировать данные библиотеки (PDF/XLSX)") {
                         activeDocumentPicker = .frequency
                     }
@@ -265,6 +301,12 @@ struct SettingsView: View {
                     
                     if let status = frequencyImportStatus {
                         Text(status)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+
+                    if let githubSyncStatus {
+                        Text(githubSyncStatus)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -546,6 +588,7 @@ struct SettingsView: View {
         libraryStore.clearAllData()
         SatelliteFrequencyStateStore.shared.clearAll()
         frequencyImportStatus = "Все данные частот удалены"
+        githubSyncStatus = nil
     }
 
     private func restoreInstalledData() {
@@ -560,6 +603,30 @@ struct SettingsView: View {
 
         settingsChanged = true
         restoreDefaultsStatus = "Восстановлено состояние как после установки"
+    }
+
+    @MainActor
+    private func syncFrequenciesFromGitHub() async {
+        isSyncingGitHubFrequencies = true
+        defer { isSyncingGitHubFrequencies = false }
+
+        do {
+            let versionURL = settings.frequencyVersionURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let summary = try await libraryStore.syncFromGitHub(
+                databaseURLString: settings.frequencyDatabaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+                versionURLString: versionURL.isEmpty ? nil : versionURL
+            )
+            switch summary.mode {
+            case .bootstrap:
+                githubSyncStatus = "Загружена полная библиотека с GitHub: \(summary.rowsCount) строк, \(summary.satellitesCount) спутников"
+            case .updated:
+                githubSyncStatus = "Обновлено до версии \(summary.version ?? "unknown"): \(summary.rowsCount) строк, \(summary.satellitesCount) спутников"
+            case .upToDate:
+                githubSyncStatus = "На GitHub нет более новой версии. Текущая версия: \(summary.version ?? "unknown")"
+            }
+        } catch {
+            githubSyncStatus = "Ошибка синхронизации с GitHub: \(error.localizedDescription)"
+        }
     }
     
     private func extractNORADIDs(fromTLEText text: String) -> [Int] {

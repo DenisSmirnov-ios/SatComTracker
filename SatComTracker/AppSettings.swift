@@ -17,6 +17,8 @@ class AppSettings: ObservableObject {
     @AppStorage("themeMode") private var themeModeRaw: String = ThemeMode.system.rawValue
     @AppStorage("didInitializeBuiltInSatellites") private var didInitializeBuiltInSatellites: Bool = false
     @AppStorage("updateMode") private var updateModeRaw: String = UpdateMode.automatic.rawValue
+    @AppStorage("frequencyDatabaseURL") var frequencyDatabaseURL: String = "https://raw.githubusercontent.com/DenisSmirnov-ios/SatComTracker/main/data/frequencies/database.csv"
+    @AppStorage("frequencyVersionURL") var frequencyVersionURL: String = "https://raw.githubusercontent.com/DenisSmirnov-ios/SatComTracker/main/data/frequencies/version.json"
     
     enum LocationSource: String, CaseIterable {
         case gps = "GPS"
@@ -86,8 +88,8 @@ class AppSettings: ObservableObject {
         }
     }
 
-    private static let defaultBuiltInNoradIDs: [Int] = SatelliteFrequencyLibrary.defaultByNorad.keys.sorted()
-    private static let defaultBuiltInNoradIDsCSV: String = SatelliteFrequencyLibrary.defaultByNorad.keys
+    private static let defaultBuiltInNoradIDs: [Int] = BuiltInGeostationaryLibrary.satellitesByNorad.keys.sorted()
+    private static let defaultBuiltInNoradIDsCSV: String = BuiltInGeostationaryLibrary.satellitesByNorad.keys
         .sorted()
         .map(String.init)
         .joined(separator: ",")
