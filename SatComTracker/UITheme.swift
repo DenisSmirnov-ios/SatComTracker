@@ -3,25 +3,25 @@ import SwiftUI
 enum UITheme {
     static func backgroundTop(for scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(red: 0.10, green: 0.12, blue: 0.16)
-            : Color(red: 0.94, green: 0.97, blue: 1.00)
+            ? Color(red: 0.05, green: 0.08, blue: 0.18)
+            : Color(red: 0.86, green: 0.93, blue: 0.99)
     }
 
     static func backgroundBottom(for scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(red: 0.04, green: 0.05, blue: 0.08)
-            : Color(red: 0.99, green: 0.99, blue: 1.00)
+            ? Color(red: 0.08, green: 0.19, blue: 0.33)
+            : Color(red: 0.74, green: 0.85, blue: 0.97)
     }
 
     static func cardBackground(for scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(red: 0.15, green: 0.17, blue: 0.22).opacity(0.92)
+            ? Color(red: 0.11, green: 0.15, blue: 0.22).opacity(0.92)
             : Color.white.opacity(0.90)
     }
 
     static func surfaceBackground(for scheme: ColorScheme) -> Color {
         scheme == .dark
-            ? Color(red: 0.18, green: 0.20, blue: 0.25).opacity(0.92)
+            ? Color(red: 0.13, green: 0.18, blue: 0.26).opacity(0.92)
             : Color.white.opacity(0.92)
     }
 
@@ -33,7 +33,8 @@ enum UITheme {
         scheme == .dark ? Color.black.opacity(0.26) : Color.black.opacity(0.08)
     }
 
-    static let accent = Color(red: 0.10, green: 0.38, blue: 0.76)
+    static let accent = Color(red: 0.15, green: 0.55, blue: 0.92)
+    static let radar = Color(red: 0.34, green: 0.74, blue: 1.0)
 }
 
 struct AppBackground: View {
