@@ -19,6 +19,17 @@ class SatelliteAPI: ObservableObject {
         configuration.httpMaximumConnectionsPerHost = APIConfig.maxConcurrentRequests
         self.session = URLSession(configuration: configuration)
     }
+
+    @MainActor
+    func restoreLatestCacheSnapshot() {
+        guard let data = UserDefaults.standard.data(forKey: cacheKey),
+              let cache = try? decoder.decode(CachedData.self, from: data),
+              !cache.satellites.isEmpty else {
+            return
+        }
+        self.satellites = cache.satellites
+        self.lastUpdateTime = cache.timestamp
+    }
     
     @MainActor
     func fetchSatellites(apiKey: String, noradIDs: [Int], latitude: Double, longitude: Double,
@@ -139,7 +150,10 @@ class SatelliteAPI: ObservableObject {
                     
                     return Satellite(
                         id: result.info.satid,
-                        name: result.info.satname,
+                        name: decorateSatelliteNameWithGeoLongitude(
+                            result.info.satname,
+                            longitude: pos.satlongitude
+                        ),
                         azimuth: pos.azimuth,
                         elevation: pos.elevation,
                         distanceKm: calculateDistance(
@@ -222,5 +236,19 @@ class SatelliteAPI: ObservableObject {
         let groundDistance = earthRadius * c
         let altDiff = satAlt - observerAlt
         return sqrt(groundDistance * groundDistance + altDiff * altDiff)
+    }
+
+    private func decorateSatelliteNameWithGeoLongitude(_ name: String, longitude: Double) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hasGeoPrefix(trimmed) { return trimmed }
+
+        let direction = longitude >= 0 ? "E" : "W"
+        let prefix = String(format: "%.1f°%@", abs(longitude), direction)
+        return "\(prefix) \(trimmed)"
+    }
+
+    private func hasGeoPrefix(_ name: String) -> Bool {
+        let pattern = #"^\d{1,3}([.,]\d+)?°[EW]\s+"#
+        return name.range(of: pattern, options: .regularExpression) != nil
     }
 }

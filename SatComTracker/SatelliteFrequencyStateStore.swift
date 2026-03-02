@@ -75,6 +75,16 @@ final class SatelliteFrequencyStateStore: ObservableObject {
         save()
         objectWillChange.send()
     }
+
+    func makeBackupSnapshot() -> [Int: [String: FrequencyState]] {
+        statesBySatellite
+    }
+
+    func applyBackupSnapshot(_ snapshot: [Int: [String: FrequencyState]]) {
+        statesBySatellite = snapshot
+        save()
+        objectWillChange.send()
+    }
     
     private func update(satelliteId: Int, key: String, mutate: (inout FrequencyState) -> Void) {
         var satStates = statesBySatellite[satelliteId] ?? [:]

@@ -4,6 +4,22 @@ import Combine
 // Хранилище Настроек
 
 class AppSettings: ObservableObject {
+    struct BackupSnapshot: Codable {
+        var apiKey: String
+        var noradIDs: [Int]
+        var customIDs: [Int]
+        var refreshInterval: Int
+        var lastCacheUpdateTime: TimeInterval
+        var locationSourceRaw: String
+        var manualLatitude: String
+        var manualLongitude: String
+        var lastSelectedAddress: String
+        var themeModeRaw: String
+        var updateModeRaw: String
+        var frequencyDatabaseURL: String
+        var frequencyVersionURL: String
+    }
+
     @AppStorage("apiKey") var apiKey: String = ""
     @AppStorage("noradIDs") var noradIDsString: String = AppSettings.defaultBuiltInNoradIDsCSV
     @AppStorage("customIDs") var customIDsString: String = ""
@@ -58,13 +74,11 @@ class AppSettings: ObservableObject {
 
     enum UpdateMode: String, CaseIterable {
         case automatic = "automatic"
-        case onDemand = "on_demand"
         case disabled = "disabled"
 
         var title: String {
             switch self {
             case .automatic: return "Автоматически"
-            case .onDemand: return "По запросу"
             case .disabled: return "Отключено"
             }
         }
@@ -72,7 +86,6 @@ class AppSettings: ObservableObject {
         var description: String {
             switch self {
             case .automatic: return "Обновление по выбранному интервалу"
-            case .onDemand: return "Обновление только при нажатии кнопки"
             case .disabled: return "Обновление полностью отключено"
             }
         }
@@ -237,5 +250,41 @@ class AppSettings: ObservableObject {
     
     func updateCacheTime() {
         lastCacheUpdate = Date()
+    }
+
+    func makeBackupSnapshot() -> BackupSnapshot {
+        BackupSnapshot(
+            apiKey: apiKey,
+            noradIDs: noradIDs,
+            customIDs: customIDs,
+            refreshInterval: refreshInterval,
+            lastCacheUpdateTime: lastCacheUpdateTime,
+            locationSourceRaw: locationSource.rawValue,
+            manualLatitude: manualLatitude,
+            manualLongitude: manualLongitude,
+            lastSelectedAddress: lastSelectedAddress,
+            themeModeRaw: themeModeRaw,
+            updateModeRaw: updateModeRaw,
+            frequencyDatabaseURL: frequencyDatabaseURL,
+            frequencyVersionURL: frequencyVersionURL
+        )
+    }
+
+    func applyBackupSnapshot(_ snapshot: BackupSnapshot) {
+        apiKey = snapshot.apiKey
+        noradIDs = snapshot.noradIDs
+        customIDs = snapshot.customIDs
+        refreshInterval = snapshot.refreshInterval
+        lastCacheUpdateTime = snapshot.lastCacheUpdateTime
+        locationSource = LocationSource(rawValue: snapshot.locationSourceRaw) ?? .gps
+        manualLatitude = snapshot.manualLatitude
+        manualLongitude = snapshot.manualLongitude
+        lastSelectedAddress = snapshot.lastSelectedAddress
+        themeModeRaw = snapshot.themeModeRaw
+        updateModeRaw = snapshot.updateModeRaw
+        frequencyDatabaseURL = snapshot.frequencyDatabaseURL
+        frequencyVersionURL = snapshot.frequencyVersionURL
+        didInitializeBuiltInSatellites = true
+        objectWillChange.send()
     }
 }

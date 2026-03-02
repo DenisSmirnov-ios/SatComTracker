@@ -10,48 +10,55 @@ struct SettingsView: View {
     @ObservedObject private var libraryStore = SatelliteFrequencyLibraryStore.shared
     
     @State private var satelliteInput = ""
-    @State private var showingClearAlert = false
     @State private var showingMapView = false
-    @State private var tleImportStatus: String?
-    @State private var frequencyImportStatus: String?
-    @State private var pendingFrequencyImportURL: URL?
-    @State private var showingFrequencyImportModeSheet = false
+    @State private var libraryStatus: String?
+    @State private var txtTransferStatus: String?
     @State private var showingDeleteFrequenciesConfirmSheet = false
-    @State private var showingRestoreDefaultsConfirm = false
     @State private var activeDocumentPicker: DocumentPickerKind?
+    @State private var txtExportURL: URL?
+    @State private var showingTXTShareSheet = false
     @State private var isSyncingGitHubFrequencies = false
+    @State private var pendingTXTImport: PendingTXTImport?
+    @State private var showingGitHubSyncConfirmSheet = false
     
     @State private var settingsChanged = false
-    @State private var restoreDefaultsStatus: String?
     @State private var githubSyncStatus: String?
 
+    private enum TXTImportMode {
+        case merge
+        case replace
+    }
+
+    private struct PendingTXTImport {
+        let byNorad: [Int: [SatelliteFrequencyItem]]
+        let statesBySatellite: [Int: [String: SatelliteFrequencyStateStore.FrequencyState]]
+        let importedRows: Int
+        let skippedRows: Int
+        let reasons: [String]
+        let satellitesCount: Int
+    }
+
     private enum DocumentPickerKind: Identifiable {
-        case tle
-        case frequency
+        case channelsTXT
 
         var id: String {
             switch self {
-            case .tle: return "tle"
-            case .frequency: return "frequency"
+            case .channelsTXT: return "channels-txt"
             }
         }
 
         var contentTypes: [UTType] {
             switch self {
-            case .tle:
-                return [.tle, .plainText, .utf8PlainText, .text]
-            case .frequency:
-                return [.pdf, .xlsx]
+            case .channelsTXT:
+                return [.plainText, .utf8PlainText, .text]
             }
         }
     }
 
     private func contentTypes(for kind: DocumentPickerKind) -> [UTType] {
         switch kind {
-        case .tle:
-            return [.tle, .plainText, .utf8PlainText, .text]
-        case .frequency:
-            return [.pdf, .xlsx]
+        case .channelsTXT:
+            return [.plainText, .utf8PlainText, .text]
         }
     }
         
@@ -81,7 +88,7 @@ struct SettingsView: View {
                             settingsChanged = true
                         }
 
-                    Text("Подсказка: получите ключ на сайте N2YO в разделе API и вставьте его сюда. Без API ключа приложение не сможет обновлять данные по спутникам.")
+                    Text("Получите API-ключ на сайте N2YO (раздел API) и вставьте его сюда. Без ключа обновление данных по спутникам будет недоступно.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -136,10 +143,6 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.menu)
 
-                    Text(settings.updateMode.description)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-
                     Picker("Интервал", selection: $settings.refreshInterval) {
                         Text("5 мин").tag(300)
                         Text("15 мин").tag(900)
@@ -153,24 +156,20 @@ struct SettingsView: View {
                     .onChange(of: settings.refreshInterval) { _ in
                         settingsChanged = true
                     }
-
-                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении одно обновление отправляет примерно 1 запрос positions на каждый спутник в активном списке.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
                     
                     if settings.updateMode == .automatic && estimatedPositionsRequestsPerHour > 1000 {
-                        Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, это выше лимита 1000/60 мин")
+                        Text("⚠️ Нагрузка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час. Это выше лимита N2YO (1000 за 60 минут).")
                             .font(.caption)
                             .foregroundColor(.red)
                     } else if settings.updateMode == .automatic && estimatedPositionsRequestsPerHour > 800 {
-                        Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, вы близко к лимиту API")
+                        Text("⚠️ Нагрузка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час. Вы близко к лимиту N2YO.")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
                     
                     if settings.lastCacheUpdate != Date.distantPast {
                         HStack {
-                            Text("Последнее обновление:")
+                            Text("Последнее обновление данных:")
                                 .font(.caption2)
                             Spacer()
                             Text(settings.lastCacheUpdate, style: .time)
@@ -182,19 +181,15 @@ struct SettingsView: View {
                 
                 Section(header: Text("Спутники (NORAD ID)")) {
                     HStack {
-                        TextField("NORAD ID или название спутника", text: $satelliteInput)
+                        TextField("Введите NORAD ID", text: $satelliteInput)
                             .textInputAutocapitalization(.characters)
                         Button("Добавить") {
                             addSatelliteFromInput()
                         }
                         .disabled(satelliteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
-                    
-                    Button("Импортировать TLE файл") {
-                        activeDocumentPicker = .tle
-                    }
-                    
-                    Text("Подсказка: введите NORAD ID или часть названия спутника из загруженной базы, затем выберите его из списка.")
+
+                    Text("Введите NORAD ID и нажмите «Добавить».")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -217,19 +212,13 @@ struct SettingsView: View {
                             .buttonStyle(.plain)
                         }
                     } else if !satelliteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Совпадений не найдено")
+                        Text("Ничего не найдено")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                     
-                    if let status = tleImportStatus {
-                        Text(status)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    
                     if sortedSatelliteIDs.isEmpty {
-                        Text("Список пуст. Добавьте NORAD ID вручную или импортируйте TLE.")
+                        Text("Список пуст. Добавьте спутник по NORAD ID.")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -250,28 +239,8 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Библиотека частот")) {
-                    Text("Базовая библиотека и базовый список спутников загружаются с GitHub и кешируются локально до следующего обновления.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-
-                    TextField("URL database.csv", text: $settings.frequencyDatabaseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.caption)
-                        .onChange(of: settings.frequencyDatabaseURL) { _ in
-                            settingsChanged = true
-                        }
-
-                    TextField("URL version.json (опционально)", text: $settings.frequencyVersionURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .font(.caption)
-                        .onChange(of: settings.frequencyVersionURL) { _ in
-                            settingsChanged = true
-                        }
-
                     Button {
-                        Task { await syncFrequenciesFromGitHub() }
+                        showingGitHubSyncConfirmSheet = true
                     } label: {
                         if isSyncingGitHubFrequencies {
                             HStack(spacing: 8) {
@@ -283,20 +252,32 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(isSyncingGitHubFrequencies)
-
-                    Text("Подсказка: если данные частот полностью очищены, приложение загрузит полный файл с GitHub без сравнения версий. Если данные уже есть, приложение проверит версию на GitHub и обновит кэш только при более новой версии, сохранив пользовательские добавления.")
+                    Text("Обновляет базовую библиотеку с GitHub. Текущая библиотека будет перезаписана.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
-                    Button("Импортировать данные библиотеки (PDF/XLSX)") {
-                        activeDocumentPicker = .frequency
+                    Button("Скачать библиотеку (TXT)") {
+                        exportLibraryTXT()
                     }
+                    Text("Сохраняет текущую библиотеку в TXT для резервной копии или ручного редактирования.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
+                    Button("Загрузить библиотеку (TXT)") {
+                        activeDocumentPicker = .channelsTXT
+                    }
+                    Text("Проверяет TXT и предлагает: дополнить текущие данные или полностью заменить библиотеку.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     
-                    Button("Удалить все данные частот", role: .destructive) {
+                    Button("Удалить все данные", role: .destructive) {
                         showingDeleteFrequenciesConfirmSheet = true
                     }
+                    Text("Полностью очищает спутники, библиотеку частот, кэш и пользовательские пометки.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     
-                    if let status = frequencyImportStatus {
+                    if let status = libraryStatus {
                         Text(status)
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -307,35 +288,14 @@ struct SettingsView: View {
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
-                }
-                
-                Section {
-                    Button("Восстановить данные как после установки", role: .destructive) {
-                        showingRestoreDefaultsConfirm = true
-                    }
-                    
-                    Text("Сбросит локальный кэш библиотеки и список спутников до состояния после установки. Все пользовательские изменения будут удалены.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 4)
-                    
-                    if let restoreDefaultsStatus {
-                        Text(restoreDefaultsStatus)
+
+                    if let txtTransferStatus {
+                        Text(txtTransferStatus)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                 }
-
-                Section {
-                    Button("Очистить все спутники", role: .destructive) {
-                        showingClearAlert = true
-                    }
-                    
-                    Text("Это действие удалит все добавленные спутники из списка отслеживания. Спутники из TLE файлов также будут удалены. При необходимости вы сможете добавить их заново.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 4)
-                }
+                
             }
             .background(AppBackground())
             .navigationTitle("Настройки")
@@ -346,69 +306,57 @@ struct SettingsView: View {
                     }
                 }
             }
-            .alert("Очистить все спутники?", isPresented: $showingClearAlert) {
-                Button("Отмена", role: .cancel) { }
-                Button("Очистить", role: .destructive) {
-                    settings.clearAllSatellites()
-                    settingsChanged = true
-                }
-            }
-            .confirmationDialog(
-                "Восстановить данные как после установки?",
-                isPresented: $showingRestoreDefaultsConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Восстановить", role: .destructive) {
-                    restoreInstalledData()
-                }
-                Button("Отмена", role: .cancel) { }
-            } message: {
-                Text("Будут удалены пользовательские спутники, импортированные частоты и правки каналов.")
-            }
             .overlay {
-                if showingDeleteFrequenciesConfirmSheet {
+                if showingDeleteFrequenciesConfirmSheet || pendingTXTImport != nil || showingGitHubSyncConfirmSheet {
                     ZStack {
                         Color.black.opacity(0.55)
                             .ignoresSafeArea()
                             .contentShape(Rectangle())
-                        
-                        FrequencyDataDeleteConfirmSheet(
-                            onConfirm: {
-                                clearAllFrequencyData()
-                                showingDeleteFrequenciesConfirmSheet = false
-                            },
-                            onCancel: {
-                                showingDeleteFrequenciesConfirmSheet = false
-                            }
-                        )
-                        .frame(maxWidth: 420)
-                        .padding(.horizontal, 16)
-                    }
-                }
-            }
-            .overlay {
-                if showingFrequencyImportModeSheet {
-                    ZStack {
-                        Color.black.opacity(0.45)
-                            .ignoresSafeArea()
-                            .contentShape(Rectangle())
-                        
-                        FrequencyImportModeSheet(
-                            onMerge: {
-                                executeFrequencyImport(mode: .merge)
-                                showingFrequencyImportModeSheet = false
-                            },
-                            onReplace: {
-                                executeFrequencyImport(mode: .replace)
-                                showingFrequencyImportModeSheet = false
-                            },
-                            onCancel: {
-                                pendingFrequencyImportURL = nil
-                                showingFrequencyImportModeSheet = false
-                            }
-                        )
-                        .frame(maxWidth: 420)
-                        .padding(.horizontal, 16)
+
+                        if showingDeleteFrequenciesConfirmSheet {
+                            FrequencyDataDeleteConfirmSheet(
+                                onConfirm: {
+                                    clearAllAppData()
+                                    showingDeleteFrequenciesConfirmSheet = false
+                                },
+                                onCancel: {
+                                    showingDeleteFrequenciesConfirmSheet = false
+                                }
+                            )
+                            .frame(maxWidth: 420)
+                            .padding(.horizontal, 16)
+                        } else if showingGitHubSyncConfirmSheet {
+                            FrequencyLibrarySyncConfirmSheet(
+                                onConfirm: {
+                                    showingGitHubSyncConfirmSheet = false
+                                    Task { await syncFrequenciesFromGitHub() }
+                                },
+                                onCancel: {
+                                    showingGitHubSyncConfirmSheet = false
+                                }
+                            )
+                            .frame(maxWidth: 420)
+                            .padding(.horizontal, 16)
+                        } else if let pendingTXTImport {
+                            FrequencyTXTImportModeSheet(
+                                importedRows: pendingTXTImport.importedRows,
+                                satellitesCount: pendingTXTImport.satellitesCount,
+                                onMerge: {
+                                    applyParsedTXTImport(pendingTXTImport, mode: .merge)
+                                    self.pendingTXTImport = nil
+                                },
+                                onReplace: {
+                                    applyParsedTXTImport(pendingTXTImport, mode: .replace)
+                                    self.pendingTXTImport = nil
+                                },
+                                onCancel: {
+                                    self.pendingTXTImport = nil
+                                    txtTransferStatus = "Импорт TXT отменен пользователем"
+                                }
+                            )
+                            .frame(maxWidth: 420)
+                            .padding(.horizontal, 16)
+                        }
                     }
                 }
             }
@@ -428,22 +376,19 @@ struct SettingsView: View {
                     contentTypes: contentTypes(for: pickerKind),
                     allowsMultipleSelection: false,
                     onPick: { urls in
-                        switch pickerKind {
-                        case .tle:
-                            handleTLEImport(.success(urls))
-                        case .frequency:
-                            handleFrequencyImport(.success(urls))
-                        }
+                        handleTXTImport(.success(urls))
                     },
                     onCancel: {
-                        switch pickerKind {
-                        case .tle:
-                            tleImportStatus = "Импорт отменен"
-                        case .frequency:
-                            frequencyImportStatus = "Импорт отменен"
-                        }
+                        txtTransferStatus = "Импорт TXT отменен пользователем"
                     }
                 )
+            }
+            .sheet(isPresented: $showingTXTShareSheet, onDismiss: {
+                txtExportURL = nil
+            }) {
+                if let txtExportURL {
+                    ShareSheet(activityItems: [txtExportURL])
+                }
             }
             .onDisappear {
                 if settingsChanged {
@@ -484,122 +429,359 @@ struct SettingsView: View {
             .replacingOccurrences(of: "_", with: " ")
     }
     
-    private func handleTLEImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .failure(let error):
-            tleImportStatus = "Ошибка импорта: \(error.localizedDescription)"
-        case .success(let urls):
-            guard let url = urls.first else {
-                tleImportStatus = "Файл не выбран"
-                return
+    private func exportLibraryTXT() {
+        let stateStore = SatelliteFrequencyStateStore.shared
+        var lines: [String] = []
+
+        for noradID in libraryStore.availableNoradIDs.sorted() {
+            for item in libraryStore.channels(forNoradID: noradID) {
+                let state = stateStore.state(for: noradID, item: item)
+                let effective = stateStore.effectiveItem(for: noradID, item: item)
+                let rx = formatExportDouble(effective.rxMHz)
+                let tx = formatExportDouble(effective.txMHz)
+                let width = effective.channelWidthKHz.map(String.init) ?? ""
+                let comment = escapeTXTField(state.comment)
+                lines.append("\(noradID),\(rx),\(tx),\(width),\(comment);")
             }
-            importTLE(from: url)
+        }
+
+        do {
+            let text = lines.joined(separator: "\n")
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            let filename = "satcom-library-\(formatter.string(from: Date())).txt"
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+            try text.data(using: .utf8)?.write(to: url, options: .atomic)
+            txtExportURL = url
+            showingTXTShareSheet = true
+            txtTransferStatus = "TXT-файл подготовлен: \(filename)"
+        } catch {
+            txtTransferStatus = "Не удалось подготовить TXT: \(error.localizedDescription)"
         }
     }
-    
-    private func importTLE(from url: URL) {
+
+    private func handleTXTImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            txtTransferStatus = "Ошибка импорта TXT: \(error.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else {
+                txtTransferStatus = "TXT-файл не выбран"
+                return
+            }
+            importLibraryTXT(from: url)
+        }
+    }
+
+    private func importLibraryTXT(from url: URL) {
         let didAccess = url.startAccessingSecurityScopedResource()
         defer {
             if didAccess {
                 url.stopAccessingSecurityScopedResource()
             }
         }
-        
+
         do {
-            let text = try readTLEText(from: url)
-            let ids = extractNORADIDs(fromTLEText: text)
-            guard !ids.isEmpty else {
-                tleImportStatus = "В файле не найдено корректных TLE записей"
+            let data = try Data(contentsOf: url)
+            guard let text = String(data: data, encoding: .utf8) else {
+                txtTransferStatus = "Неверная кодировка TXT. Используйте UTF-8."
                 return
             }
-            settings.addCustomIDs(ids)
-            settingsChanged = true
-            tleImportStatus = "Импортировано \(ids.count) спутников из TLE"
-        } catch {
-            tleImportStatus = "Не удалось прочитать файл: \(error.localizedDescription)"
-        }
-    }
 
-    private func readTLEText(from url: URL) throws -> String {
-        let data = try Data(contentsOf: url)
-        let encodings: [String.Encoding] = [
-            .utf8,
-            .ascii,
-            .windowsCP1251,
-            .utf16,
-            .utf16LittleEndian,
-            .utf16BigEndian
-        ]
+            var byNorad: [Int: [SatelliteFrequencyItem]] = [:]
+            var statesBySatellite: [Int: [String: SatelliteFrequencyStateStore.FrequencyState]] = [:]
+            var seen = Set<String>()
+            var importedRows = 0
+            var skippedRows = 0
+            var invalidFormatCount = 0
+            var invalidNoradCount = 0
+            var invalidFrequencyCount = 0
+            var invalidWidthCount = 0
+            var duplicateCount = 0
 
-        for encoding in encodings {
-            if let text = String(data: data, encoding: encoding), !text.isEmpty {
-                return text
+            let rawRecords = splitEscapedRecords(text)
+            for rawRecord in rawRecords {
+                let record = rawRecord.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !record.isEmpty else { continue }
+                let fields = splitEscapedCSVLine(record)
+                guard fields.count >= 5 else {
+                    skippedRows += 1
+                    invalidFormatCount += 1
+                    continue
+                }
+
+                guard let noradID = Int(fields[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+                      noradID > 0 else {
+                    skippedRows += 1
+                    invalidNoradCount += 1
+                    continue
+                }
+
+                let rx = parseExportDouble(fields[1])
+                let tx = parseExportDouble(fields[2])
+                if rx == nil && tx == nil {
+                    skippedRows += 1
+                    invalidFrequencyCount += 1
+                    continue
+                }
+
+                let rawWidth = fields[3].trimmingCharacters(in: .whitespacesAndNewlines)
+                let width: Int?
+                if rawWidth.isEmpty {
+                    width = nil
+                } else if let parsedWidth = Int(rawWidth), parsedWidth > 0 {
+                    width = parsedWidth
+                } else {
+                    skippedRows += 1
+                    invalidWidthCount += 1
+                    continue
+                }
+
+                let rawComment = fields.dropFirst(4).joined(separator: ",")
+                let comment = unescapeTXTField(rawComment).trimmingCharacters(in: .whitespacesAndNewlines)
+
+                let spacing: Double?
+                if let rx, let tx {
+                    spacing = abs(tx - rx)
+                } else {
+                    spacing = nil
+                }
+
+                let item = SatelliteFrequencyItem(
+                    rxMHz: rx,
+                    txMHz: tx,
+                    spacingMHz: spacing,
+                    channelWidthKHz: width
+                )
+
+                let globalKey = "\(noradID)#\(item.storageKey)"
+                if seen.contains(globalKey) {
+                    skippedRows += 1
+                    duplicateCount += 1
+                    continue
+                }
+                seen.insert(globalKey)
+
+                byNorad[noradID, default: []].append(item)
+
+                if !comment.isEmpty {
+                    var state = SatelliteFrequencyStateStore.FrequencyState()
+                    state.comment = comment
+                    statesBySatellite[noradID, default: [:]][item.storageKey] = state
+                }
+
+                importedRows += 1
             }
-        }
 
-        throw NSError(
-            domain: "TLEImport",
-            code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "Неподдерживаемая кодировка файла"]
-        )
-    }
-    
-    private func handleFrequencyImport(_ result: Result<[URL], Error>) {
-        switch result {
-        case .failure(let error):
-            frequencyImportStatus = "Ошибка импорта частот: \(error.localizedDescription)"
-        case .success(let urls):
-            guard let url = urls.first else {
-                frequencyImportStatus = "Файл частот не выбран"
+            guard importedRows > 0 else {
+                txtTransferStatus = "Импорт не выполнен: корректные каналы не найдены (пропущено \(skippedRows))."
+                libraryStatus = "Проверьте формат строк: norad,rx,tx,width,comment;"
                 return
             }
-            pendingFrequencyImportURL = url
-            showingFrequencyImportModeSheet = true
-        }
-    }
-    
-    private func executeFrequencyImport(mode: SatelliteFrequencyLibraryStore.ImportMode) {
-        guard let url = pendingFrequencyImportURL else {
-            frequencyImportStatus = "Файл частот не выбран"
-            return
-        }
-        
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-            pendingFrequencyImportURL = nil
-        }
-        
-        do {
-            let summary = try libraryStore.importFromFile(url: url, mode: mode)
-            let modeText = summary.mode == .replace ? "Полная замена" : "Объединение"
-            frequencyImportStatus = "\(modeText): добавлено \(summary.addedRows), дубликатов \(summary.duplicateRows), спутников \(summary.satellitesAffected)"
+
+            var reasons: [String] = []
+            if invalidFormatCount > 0 { reasons.append("формат: \(invalidFormatCount)") }
+            if invalidNoradCount > 0 { reasons.append("norad: \(invalidNoradCount)") }
+            if invalidFrequencyCount > 0 { reasons.append("rx/tx: \(invalidFrequencyCount)") }
+            if invalidWidthCount > 0 { reasons.append("ширина: \(invalidWidthCount)") }
+            if duplicateCount > 0 { reasons.append("дубликаты: \(duplicateCount)") }
+            pendingTXTImport = PendingTXTImport(
+                byNorad: byNorad,
+                statesBySatellite: statesBySatellite,
+                importedRows: importedRows,
+                skippedRows: skippedRows,
+                reasons: reasons,
+                satellitesCount: byNorad.keys.count
+            )
+            txtTransferStatus = "TXT проверен: \(importedRows) каналов, \(byNorad.keys.count) спутников. Выберите режим импорта."
+            libraryStatus = "Выберите: дополнить или заменить библиотеку"
         } catch {
-            frequencyImportStatus = "Не удалось импортировать частоты: \(error.localizedDescription)"
+            txtTransferStatus = "Не удалось импортировать TXT: \(error.localizedDescription)"
         }
     }
-    
-    private func clearAllFrequencyData() {
-        libraryStore.clearAllData()
-        SatelliteFrequencyStateStore.shared.clearAll()
-        frequencyImportStatus = "Все данные частот удалены"
-        githubSyncStatus = nil
-    }
 
-    private func restoreInstalledData() {
-        settings.restoreInstalledDefaults()
-        libraryStore.restoreBuiltInData()
-        SatelliteFrequencyStateStore.shared.clearAll()
+    private func applyParsedTXTImport(_ payload: PendingTXTImport, mode: TXTImportMode) {
+        let stateStore = SatelliteFrequencyStateStore.shared
 
-        tleImportStatus = nil
-        frequencyImportStatus = nil
-        pendingFrequencyImportURL = nil
-        satelliteInput = ""
+        switch mode {
+        case .replace:
+            libraryStore.replaceLibrary(byNorad: payload.byNorad)
+            stateStore.applyBackupSnapshot(payload.statesBySatellite)
+            let importedNoradIDs = payload.byNorad.keys.sorted()
+            settings.noradIDs = importedNoradIDs
+            settings.customIDs = []
+        case .merge:
+            let current = buildCurrentLibrarySnapshot()
+            var merged = current
+            for (noradID, items) in payload.byNorad {
+                let existingKeys = Set((merged[noradID] ?? []).map(\.storageKey))
+                var combined = merged[noradID] ?? []
+                for item in items where !existingKeys.contains(item.storageKey) {
+                    combined.append(item)
+                }
+                merged[noradID] = combined
+            }
+            libraryStore.replaceLibrary(byNorad: merged)
+
+            var mergedStates = stateStore.makeBackupSnapshot()
+            for (satID, incomingStates) in payload.statesBySatellite {
+                var satStates = mergedStates[satID] ?? [:]
+                for (key, incoming) in incomingStates where satStates[key] == nil {
+                    satStates[key] = incoming
+                }
+                mergedStates[satID] = satStates
+            }
+            stateStore.applyBackupSnapshot(mergedStates)
+
+            let unionNorad = Set(settings.noradIDs).union(payload.byNorad.keys)
+            settings.noradIDs = Array(unionNorad).sorted()
+        }
 
         settingsChanged = true
-        restoreDefaultsStatus = "Восстановлено состояние как после установки"
+
+        if payload.skippedRows > 0, !payload.reasons.isEmpty {
+            txtTransferStatus = "Импорт завершен: \(payload.importedRows) каналов, \(payload.satellitesCount) спутников. Пропущено: \(payload.skippedRows) (\(payload.reasons.joined(separator: ", ")))."
+        } else {
+            txtTransferStatus = "Импорт завершен: \(payload.importedRows) каналов, \(payload.satellitesCount) спутников."
+        }
+
+        switch mode {
+        case .merge:
+            libraryStatus = "TXT импортирован: данные дополнены"
+        case .replace:
+            libraryStatus = "TXT импортирован: библиотека полностью заменена"
+        }
+    }
+
+    private func buildCurrentLibrarySnapshot() -> [Int: [SatelliteFrequencyItem]] {
+        var snapshot: [Int: [SatelliteFrequencyItem]] = [:]
+        for noradID in libraryStore.availableNoradIDs {
+            let channels = libraryStore.channels(forNoradID: noradID)
+            if !channels.isEmpty {
+                snapshot[noradID] = channels
+            }
+        }
+        return snapshot
+    }
+
+    private func formatExportDouble(_ value: Double?) -> String {
+        guard let value else { return "" }
+        return String(format: "%.3f", value)
+    }
+
+    private func parseExportDouble(_ raw: String) -> Double? {
+        let value = raw
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        return Double(value)
+    }
+
+    private func escapeTXTField(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: ",", with: "\\,")
+            .replacingOccurrences(of: ";", with: "\\;")
+            .replacingOccurrences(of: "\n", with: "\\n")
+    }
+
+    private func unescapeTXTField(_ value: String) -> String {
+        var result = ""
+        var escaping = false
+        for ch in value {
+            if escaping {
+                switch ch {
+                case "n": result.append("\n")
+                case ",": result.append(",")
+                case ";": result.append(";")
+                case "\\": result.append("\\")
+                default:
+                    result.append(ch)
+                }
+                escaping = false
+            } else if ch == "\\" {
+                escaping = true
+            } else {
+                result.append(ch)
+            }
+        }
+        if escaping { result.append("\\") }
+        return result
+    }
+
+    private func splitEscapedCSVLine(_ line: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var escaping = false
+        for ch in line {
+            if escaping {
+                current.append("\\")
+                current.append(ch)
+                escaping = false
+                continue
+            }
+            if ch == "\\" {
+                escaping = true
+                continue
+            }
+            if ch == "," {
+                fields.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        if escaping { current.append("\\") }
+        fields.append(current)
+        return fields
+    }
+
+    private func splitEscapedRecords(_ text: String) -> [String] {
+        var records: [String] = []
+        var current = ""
+        var escaping = false
+
+        for ch in text {
+            if escaping {
+                current.append("\\")
+                current.append(ch)
+                escaping = false
+                continue
+            }
+
+            if ch == "\\" {
+                escaping = true
+                continue
+            }
+
+            if ch == ";" {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    records.append(trimmed)
+                }
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+
+        if escaping { current.append("\\") }
+
+        let tail = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !tail.isEmpty {
+            records.append(tail)
+        }
+        return records
+    }
+    
+    private func clearAllAppData() {
+        settings.clearAllSatellites()
+        settings.lastCacheUpdate = Date.distantPast
+        libraryStore.clearAllData()
+        SatelliteFrequencyStateStore.shared.clearAll()
+        libraryStatus = "Все данные приложения удалены"
+        githubSyncStatus = nil
+        settingsChanged = true
     }
 
     @MainActor
@@ -619,58 +801,15 @@ struct SettingsView: View {
             }
             switch summary.mode {
             case .bootstrap:
-                githubSyncStatus = "Загружена полная библиотека с GitHub: \(summary.rowsCount) строк, \(summary.satellitesCount) спутников"
+                githubSyncStatus = "Базовая библиотека загружена с GitHub: \(summary.rowsCount) строк, \(summary.satellitesCount) спутников."
             case .updated:
-                githubSyncStatus = "Обновлено до версии \(summary.version ?? "unknown"): \(summary.rowsCount) строк, \(summary.satellitesCount) спутников"
+                githubSyncStatus = "Библиотека обновлена до версии \(summary.version ?? "unknown"): \(summary.rowsCount) строк, \(summary.satellitesCount) спутников."
             case .upToDate:
-                githubSyncStatus = "На GitHub нет более новой версии. Текущая версия: \(summary.version ?? "unknown")"
+                githubSyncStatus = "Доступна актуальная версия. Текущая версия: \(summary.version ?? "unknown")."
             }
         } catch {
             githubSyncStatus = "Ошибка синхронизации с GitHub: \(error.localizedDescription)"
         }
-    }
-    
-    private func extractNORADIDs(fromTLEText text: String) -> [Int] {
-        let lines = text
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        
-        var ids = Set<Int>()
-        var index = 0
-        
-        while index < lines.count {
-            let line = lines[index]
-            if line.hasPrefix("1 "), let id = extractNORADID(fromLine1: line) {
-                ids.insert(id)
-                index += 1
-                continue
-            }
-            
-            // 3-строчный TLE: NAME, line1, line2
-            if index + 1 < lines.count,
-               lines[index + 1].hasPrefix("1 "),
-               let id = extractNORADID(fromLine1: lines[index + 1]) {
-                ids.insert(id)
-                index += 2
-                continue
-            }
-            
-            index += 1
-        }
-        
-        return Array(ids).sorted()
-    }
-    
-    private func extractNORADID(fromLine1 line: String) -> Int? {
-        let parts = line.split(whereSeparator: { $0.isWhitespace })
-        guard parts.count > 1 else { return nil }
-        
-        let token = String(parts[1])
-        let digits = token.prefix { $0.isNumber }
-        guard !digits.isEmpty else { return nil }
-        
-        return Int(digits)
     }
     
     @ViewBuilder
@@ -744,17 +883,13 @@ struct SettingsView: View {
                 )
             }
             
-            Text(settings.locationSource.description)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.top, 4)
         }
         .padding(.vertical, 4)
     }
 
     private var gpsStatusMessage: (message: String, isError: Bool)? {
         if locationManager.currentLocation != nil {
-            return ("GPS работает стабильно. Координаты успешно получены.", false)
+            return ("GPS работает. Координаты получены.", false)
         }
 
         if let error = locationManager.locationError, !error.isEmpty {
@@ -766,13 +901,13 @@ struct SettingsView: View {
             case .denied, .restricted:
                 return ("GPS отключен для приложения. Включите доступ к геопозиции в настройках телефона.", true)
             case .notDetermined:
-                return ("Разрешение GPS еще не выдано. Нажмите «Разрешить доступ».", true)
+                return ("Доступ к GPS еще не выдан. Нажмите «Разрешить доступ».", true)
             default:
                 return ("GPS недоступен. Проверьте настройки геолокации.", true)
             }
         }
 
-        return ("Ожидание сигнала GPS. Если координаты не появятся, проверьте интернет и геолокацию.", true)
+        return ("Ожидание сигнала GPS. Если координаты не появляются, проверьте геолокацию и интернет.", true)
     }
     
     @ViewBuilder
@@ -824,10 +959,6 @@ struct SettingsView: View {
                 }
             }
             
-            Text(settings.locationSource.description)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.top, 4)
         }
         .padding(.vertical, 4)
     }
@@ -877,12 +1008,94 @@ struct SettingsView: View {
             .buttonStyle(.bordered)
             .padding(.top, 4)
             
-            Text(settings.locationSource.description)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-                .padding(.top, 4)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+}
+
+private struct FrequencyTXTImportModeSheet: View {
+    let importedRows: Int
+    let satellitesCount: Int
+    let onMerge: () -> Void
+    let onReplace: () -> Void
+    let onCancel: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.14))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "arrow.triangle.branch")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(.blue)
+            }
+
+            VStack(spacing: 6) {
+                Text("Импорт TXT")
+                    .font(.title3.weight(.bold))
+                Text("Найдено \(importedRows) каналов, \(satellitesCount) спутников. Выберите, как загрузить данные.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(spacing: 10) {
+                Button(action: onMerge) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Дополнить данные")
+                            .font(.headline)
+                        Text("Добавит новые каналы, текущие данные останутся.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: onReplace) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Полностью заменить")
+                            .font(.headline)
+                        Text("Заменит библиотеку данными из TXT.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+
+                Button("Отмена", action: onCancel)
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(UITheme.surfaceBackground(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
     }
 }
 
@@ -927,16 +1140,6 @@ private struct SystemDocumentPicker: UIViewControllerRepresentable {
     }
 }
 
-private extension UTType {
-    static var xlsx: UTType {
-        UTType(filenameExtension: "xlsx") ?? .data
-    }
-
-    static var tle: UTType {
-        UTType(filenameExtension: "tle") ?? .plainText
-    }
-}
-
 private struct FrequencyDataDeleteConfirmSheet: View {
     let onConfirm: () -> Void
     let onCancel: () -> Void
@@ -965,20 +1168,20 @@ private struct FrequencyDataDeleteConfirmSheet: View {
                 }
                 
                 VStack(spacing: 8) {
-                    Text("Вы точно уверены?")
+                    Text("Удалить все данные?")
                         .font(.title3)
                         .fontWeight(.bold)
                     
-                    Text("Все данные о частотах будут уничтожены без возможности восстановления.")
+                    Text("Это действие полностью очистит приложение. Восстановить данные после удаления будет нельзя.")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Удалится предустановленная библиотека частот", systemImage: "trash")
-                    Label("Удалятся данные, добавленные пользователем", systemImage: "person.crop.circle.badge.xmark")
-                    Label("Удалятся комментарии и статусы каналов", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+                    Label("Удалится весь список спутников", systemImage: "satellite")
+                    Label("Удалится библиотека частот и загруженный кэш", systemImage: "trash")
+                    Label("Удалятся пользовательские частоты, заметки и статусы", systemImage: "person.crop.circle.badge.xmark")
                 }
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -996,7 +1199,7 @@ private struct FrequencyDataDeleteConfirmSheet: View {
                             .fill(Color.red.opacity(0.14))
                             .frame(width: trackWidth, height: 56)
                         
-                        Text("Да, удалить все данные!")
+                        Text("Свайп вправо для удаления")
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.red)
@@ -1057,72 +1260,50 @@ private struct FrequencyDataDeleteConfirmSheet: View {
     }
 }
 
-private struct FrequencyImportModeSheet: View {
-    let onMerge: () -> Void
-    let onReplace: () -> Void
+private struct FrequencyLibrarySyncConfirmSheet: View {
+    let onConfirm: () -> Void
     let onCancel: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-    
+
     var body: some View {
         VStack(spacing: 16) {
-            HStack {
-                Spacer()
-                Button("Отмена") { onCancel() }
-                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.14))
+                    .frame(width: 64, height: 64)
+                Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(.blue)
             }
-            
-            Image(systemName: "tray.and.arrow.down.fill")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundColor(UITheme.accent)
-            
-            Text("Как обновить библиотеку?")
-                .font(.title3)
-                .fontWeight(.bold)
-            
-            Text("Выберите, как применить данные из выбранного файла частот.")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            
-            Button {
-                onMerge()
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Объединить данные библиотеки")
-                        .font(.headline)
-                    Text("Добавить новые частоты, дубликаты не трогать")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(UITheme.accent.opacity(0.10))
-                .cornerRadius(12)
+
+            VStack(spacing: 8) {
+                Text("Обновить библиотеку с GitHub?")
+                    .font(.title3.weight(.bold))
+                Text("Текущая библиотека частот будет полностью заменена новыми данными.")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                Text("Перед обновлением рекомендуется сделать резервную копию через «Скачать библиотеку (TXT)».")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .buttonStyle(.plain)
-            
-            Button {
-                onReplace()
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Полностью заменить библиотеку")
-                        .font(.headline)
-                        .foregroundColor(.orange)
-                    Text("Стереть текущие данные и загрузить только из файла")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Color.orange.opacity(0.10))
-                .cornerRadius(12)
+
+            HStack(spacing: 10) {
+                Button("Отмена", action: onCancel)
+                    .buttonStyle(.bordered)
+                Button("Обновить", action: onConfirm)
+                    .buttonStyle(.borderedProminent)
             }
-            .buttonStyle(.plain)
         }
-        .padding()
+        .padding(18)
         .background(
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(UITheme.surfaceBackground(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
     }

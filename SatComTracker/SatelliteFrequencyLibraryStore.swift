@@ -5,6 +5,13 @@ import PDFKit
 
 final class SatelliteFrequencyLibraryStore: ObservableObject {
     static let shared = SatelliteFrequencyLibraryStore()
+
+    struct BackupSnapshot: Codable {
+        var overrideByNorad: [Int: [SatelliteFrequencyItem]]?
+        var mergedByNorad: [Int: [SatelliteFrequencyItem]]
+        var satelliteNameByNorad: [Int: String]
+        var remoteVersion: String?
+    }
     
     enum ImportMode {
         case merge
@@ -53,6 +60,12 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     func channels(for satellite: Satellite) -> [SatelliteFrequencyItem] {
         let base = (overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad)[satellite.id] ?? []
         let merged = mergedByNorad[satellite.id] ?? []
+        return deduplicated(base + merged)
+    }
+
+    func channels(forNoradID noradID: Int) -> [SatelliteFrequencyItem] {
+        let base = (overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad)[noradID] ?? []
+        let merged = mergedByNorad[noradID] ?? []
         return deduplicated(base + merged)
     }
 
@@ -167,6 +180,14 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         satelliteNameByNorad = [:]
         remoteVersion = nil
         save()
+    }
+
+    func replaceLibrary(byNorad: [Int: [SatelliteFrequencyItem]]) {
+        overrideByNorad = byNorad
+        mergedByNorad = [:]
+        remoteVersion = nil
+        save()
+        objectWillChange.send()
     }
 
     func restoreBuiltInData() {
@@ -358,6 +379,24 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: "_", with: " ")
             .replacingOccurrences(of: "  ", with: " ")
+    }
+
+    func makeBackupSnapshot() -> BackupSnapshot {
+        BackupSnapshot(
+            overrideByNorad: overrideByNorad,
+            mergedByNorad: mergedByNorad,
+            satelliteNameByNorad: satelliteNameByNorad,
+            remoteVersion: remoteVersion
+        )
+    }
+
+    func applyBackupSnapshot(_ snapshot: BackupSnapshot) {
+        overrideByNorad = snapshot.overrideByNorad
+        mergedByNorad = snapshot.mergedByNorad
+        satelliteNameByNorad = snapshot.satelliteNameByNorad
+        remoteVersion = snapshot.remoteVersion
+        save()
+        objectWillChange.send()
     }
 }
 

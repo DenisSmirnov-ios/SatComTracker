@@ -145,14 +145,14 @@ struct MapLocationView: View {
                                     dismiss()
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
+                                .controlSize(.regular)
 
                                 Button("Отмена") {
                                     selectedCoordinate = nil
                                     selectedAddress = nil
                                 }
                                 .buttonStyle(.bordered)
-                                .controlSize(.small)
+                                .controlSize(.regular)
                             }
                         }
                         .appCard(cornerRadius: 14)
@@ -166,15 +166,21 @@ struct MapLocationView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Отмена") {
+                    Button(action: {
                         dismiss()
+                    }) {
+                        Image(systemName: "xmark")
                     }
+                    .buttonStyle(AppToolbarIconButtonStyle())
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Моё местоположение") {
+                    Button(action: {
                         focusOnUserLocation()
+                    }) {
+                        Image(systemName: "location.fill")
                     }
+                    .buttonStyle(AppToolbarIconButtonStyle())
                 }
             }
             .onChange(of: searchText) { newValue in

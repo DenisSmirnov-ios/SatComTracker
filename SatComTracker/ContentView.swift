@@ -55,7 +55,7 @@ struct ContentView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     RefreshButton(
                         isLoading: apiService.isLoading,
-                        isEnabled: settings.updateMode != .disabled,
+                        isEnabled: settings.updateMode == .automatic,
                         action: { refreshData(trigger: .manual) }
                     )
                 }
@@ -67,7 +67,7 @@ struct ContentView: View {
         }
         .sheet(item: $selectedSatellite) { satellite in
             NavigationView {
-                SatelliteDetailView(satellite: satellite, compassManager: compassManager)
+                SatelliteDetailView(satellite: satellite, compassManager: compassManager, settings: settings)
             }
         }
         .onAppear {
@@ -116,10 +116,18 @@ struct ContentView: View {
     
     private func checkAndRefreshData() {
         Task { @MainActor in
+            // Always show the latest cached snapshot immediately on launch.
+            apiService.restoreLatestCacheSnapshot()
+
+            if settings.updateMode == .disabled {
+                return
+            }
+
             let coords = await getCoordinates()
             guard let coords = coords else { return }
 
-            if settings.updateMode != .automatic {
+            // Bootstrap on app launch: if no cached snapshot exists yet, fetch once regardless of update mode.
+            if settings.lastCacheUpdate == Date.distantPast {
                 await apiService.fetchSatellites(
                     apiKey: settings.apiKey,
                     noradIDs: settings.allActiveIDs,
@@ -128,8 +136,8 @@ struct ContentView: View {
                     altitude: coords.altitude,
                     refreshInterval: settings.refreshInterval,
                     forceRefresh: true,
-                    allowRemoteUpdates: false,
-                    onCacheUpdated: nil
+                    allowRemoteUpdates: true,
+                    onCacheUpdated: { settings.updateCacheTime() }
                 )
                 return
             }
@@ -165,18 +173,13 @@ struct ContentView: View {
     private func refreshData(trigger: RefreshTrigger = .manual) {
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
+            // Keep UI populated even before location is available or remote fetch is allowed.
+            apiService.restoreLatestCacheSnapshot()
+
+            guard settings.updateMode == .automatic else { return }
+
             let coords = await getCoordinates()
             guard let coords = coords else { return }
-
-            let allowRemoteUpdates: Bool
-            switch settings.updateMode {
-            case .automatic:
-                allowRemoteUpdates = true
-            case .onDemand:
-                allowRemoteUpdates = (trigger == .manual)
-            case .disabled:
-                allowRemoteUpdates = false
-            }
             
             await apiService.fetchSatellites(
                 apiKey: settings.apiKey,
@@ -186,11 +189,9 @@ struct ContentView: View {
                 altitude: coords.altitude,
                 refreshInterval: settings.refreshInterval,
                 forceRefresh: true,
-                allowRemoteUpdates: allowRemoteUpdates,
+                allowRemoteUpdates: true,
                 onCacheUpdated: {
-                    if allowRemoteUpdates {
-                        settings.updateCacheTime()
-                    }
+                    settings.updateCacheTime()
                 }
             )
         }

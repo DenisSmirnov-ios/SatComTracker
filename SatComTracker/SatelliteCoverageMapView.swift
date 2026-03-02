@@ -3,13 +3,36 @@ import MapKit
 
 struct SatelliteCoverageMapView: View {
     @Environment(\.dismiss) private var dismiss
-    let satellite: Satellite
+    @ObservedObject var settings: AppSettings
 
-    @State private var mapType: MKMapType = .hybrid
+    @StateObject private var apiService = SatelliteAPI()
+    @State private var mapType: MKMapType = .satellite
+    @State private var trackedSatellite: Satellite
+    @State private var isRefreshing = false
+    @State private var refreshStatus: String?
+    @State private var refreshTick = 0
+
     @Environment(\.colorScheme) private var colorScheme
 
+    init(satellite: Satellite, settings: AppSettings) {
+        self.settings = settings
+        _trackedSatellite = State(initialValue: satellite)
+    }
+
     private var coverageData: SatelliteCoverageData? {
-        SatelliteCoverageData.make(from: satellite)
+        SatelliteCoverageData.make(from: trackedSatellite)
+    }
+
+    private var observerCoordinate: CLLocationCoordinate2D? {
+        guard let lat = trackedSatellite.observerLatitude,
+              let lon = trackedSatellite.observerLongitude else {
+            return nil
+        }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
+
+    private var autoRefreshTaskID: String {
+        "\(trackedSatellite.id)-\(settings.updateMode.rawValue)-\(settings.refreshInterval)-\(refreshTick)"
     }
 
     var body: some View {
@@ -18,6 +41,7 @@ struct SatelliteCoverageMapView: View {
                 if let coverageData {
                     SatelliteCoverageMapRepresentable(
                         coverageData: coverageData,
+                        satelliteName: trackedSatellite.name,
                         observerCoordinate: observerCoordinate,
                         mapType: mapType
                     )
@@ -36,11 +60,10 @@ struct SatelliteCoverageMapView: View {
                 }
 
                 VStack(spacing: 12) {
-                    HStack {
+                    HStack(spacing: 8) {
                         Menu {
                             Button("Схема") { mapType = .standard }
                             Button("Спутник") { mapType = .satellite }
-                            Button("Гибрид") { mapType = .hybrid }
                         } label: {
                             Label("Карта", systemImage: "map")
                                 .font(.system(size: 13, weight: .semibold, design: .rounded))
@@ -52,46 +75,170 @@ struct SatelliteCoverageMapView: View {
                                     Capsule().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
                                 )
                         }
+
                         Spacer()
+
+                        Button {
+                            dismiss()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .foregroundColor(.primary)
+                                .frame(width: 30, height: 30)
+                                .background(UITheme.surfaceBackground(for: colorScheme))
+                                .clipShape(Circle())
+                                .overlay(
+                                    Circle().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+                                )
+                        }
                     }
+
+                    coverageInfoPanel
 
                     Spacer()
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 8) {
-                            Circle().fill(Color.orange.opacity(0.35)).frame(width: 12, height: 12)
-                            Text("Оранжевая зона: геометрическая видимость (угол места > 0°)")
-                                .font(.caption2)
-                        }
-                        HStack(spacing: 8) {
-                            Circle().fill(Color.green.opacity(0.35)).frame(width: 12, height: 12)
-                            Text("Зеленая зона: уверенный прием (угол места >= 5°)")
-                                .font(.caption2)
-                        }
-                    }
-                    .padding(12)
-                    .background(UITheme.surfaceBackground(for: colorScheme).opacity(0.95))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
-                    )
+                    legendPanel
                 }
                 .padding(12)
             }
-            .navigationTitle("Покрытие: \(satellite.name)")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Закрыть") { dismiss() }
-                }
+        }
+        .task(id: autoRefreshTaskID) {
+            guard settings.updateMode == .automatic, settings.refreshInterval > 0 else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(settings.refreshInterval) * 1_000_000_000)
+                await refreshPosition(force: true, source: .timer)
             }
         }
     }
 
-    private var observerCoordinate: CLLocationCoordinate2D? {
-        guard let lat = satellite.observerLatitude, let lon = satellite.observerLongitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    @MainActor
+    private func refreshPosition(force: Bool, source: RefreshSource) async {
+        guard let observer = observerCoordinate else {
+            refreshStatus = "Неизвестны координаты наблюдателя"
+            return
+        }
+
+        if settings.updateMode == .disabled {
+            refreshStatus = "Обновление спутников отключено в настройках"
+            return
+        }
+
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        await apiService.fetchSatellites(
+            apiKey: settings.apiKey,
+            noradIDs: [trackedSatellite.id],
+            latitude: observer.latitude,
+            longitude: observer.longitude,
+            altitude: 0,
+            refreshInterval: settings.refreshInterval,
+            forceRefresh: force,
+            allowRemoteUpdates: true,
+            onCacheUpdated: nil
+        )
+
+        if let updated = apiService.satellites.first(where: { $0.id == trackedSatellite.id }) {
+            if !updated.isError, updated.satelliteLongitude != nil {
+                trackedSatellite = updated
+                refreshStatus = "Обновлено: \(timeString(from: updated.timestamp))"
+                refreshTick += 1
+            } else {
+                refreshStatus = updated.errorMessage ?? "Ошибка обновления. Оставлены последние валидные данные."
+            }
+        } else if let error = apiService.errorMessage {
+            refreshStatus = error
+        }
+    }
+
+    private func timeString(from date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        formatter.dateStyle = .none
+        return formatter.string(from: date)
+    }
+
+    private func formatGeoLongitude(_ value: Double?) -> String {
+        guard let value else { return "N/A" }
+        let direction = value >= 0 ? "E" : "W"
+        return String(format: "%.1f°%@", abs(value), direction)
+    }
+
+    private enum RefreshSource {
+        case timer
+    }
+
+    private var coverageInfoPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Геодолгота: \(formatGeoLongitude(trackedSatellite.satelliteLongitude))")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                Text("NORAD \(trackedSatellite.id)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 14) {
+                infoChip(title: "Азимут", value: String(format: "%.0f°", trackedSatellite.azimuth), color: .blue)
+                infoChip(title: "Элевация", value: String(format: "%.0f°", trackedSatellite.elevation), color: .green)
+                infoChip(title: "Дистанция", value: String(format: "%.0f км", trackedSatellite.distanceKm), color: .orange)
+            }
+
+            if let refreshStatus {
+                Text(refreshStatus)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(12)
+        .background(UITheme.surfaceBackground(for: colorScheme).opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    private func infoChip(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(color)
+        }
+    }
+
+    private var legendPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(Color.orange.opacity(0.35)).frame(width: 12, height: 12)
+                Text("Оранжевая зона: геометрическая видимость (угол места > 0°)")
+                    .font(.caption2)
+            }
+            HStack(spacing: 8) {
+                Circle().fill(Color.green.opacity(0.35)).frame(width: 12, height: 12)
+                Text("Зеленая зона: уверенный прием (угол места >= 5°)")
+                    .font(.caption2)
+            }
+            HStack(spacing: 8) {
+                Rectangle().fill(Color.cyan.opacity(0.7)).frame(width: 12, height: 2)
+                Text("Линия визирования: вы -> подспутниковая точка")
+                    .font(.caption2)
+            }
+        }
+        .padding(12)
+        .background(UITheme.surfaceBackground(for: colorScheme).opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+        )
     }
 }
 
@@ -130,7 +277,6 @@ private struct SatelliteCoverageData {
         let ratio = earthRadiusKm / (earthRadiusKm + altitudeKm)
         let elevation = minimumElevationDeg * .pi / 180
 
-        // psi = arccos(k * cos(e)) - e, where k = Re / (Re + h)
         let clamped = max(-1.0, min(1.0, ratio * cos(elevation)))
         let geometricMax = maxGeometricCentralAngleDeg * .pi / 180
         let psi = min(geometricMax, max(0, acos(clamped) - elevation))
@@ -140,6 +286,7 @@ private struct SatelliteCoverageData {
 
 private struct SatelliteCoverageMapRepresentable: UIViewRepresentable {
     let coverageData: SatelliteCoverageData
+    let satelliteName: String
     let observerCoordinate: CLLocationCoordinate2D?
     let mapType: MKMapType
 
@@ -162,11 +309,18 @@ private struct SatelliteCoverageMapRepresentable: UIViewRepresentable {
         let confident = MKCircle(center: coverageData.subSatelliteCoordinate, radius: coverageData.confidentCoverageRadiusMeters)
         confident.title = "confident"
 
-        mapView.addOverlays([full, confident])
+        var overlays: [MKOverlay] = [full, confident]
+
+        if let observerCoordinate {
+            let points = [observerCoordinate, coverageData.subSatelliteCoordinate]
+            overlays.append(MKPolyline(coordinates: points, count: points.count))
+        }
+
+        mapView.addOverlays(overlays)
 
         let satAnnotation = MKPointAnnotation()
         satAnnotation.coordinate = coverageData.subSatelliteCoordinate
-        satAnnotation.title = "Спутник"
+        satAnnotation.title = satelliteName
         mapView.addAnnotation(satAnnotation)
 
         if let observerCoordinate {
@@ -185,7 +339,7 @@ private struct SatelliteCoverageMapRepresentable: UIViewRepresentable {
 
         mapView.setVisibleMapRect(
             visibleRect,
-            edgePadding: UIEdgeInsets(top: 80, left: 40, bottom: 160, right: 40),
+            edgePadding: UIEdgeInsets(top: 140, left: 40, bottom: 220, right: 40),
             animated: true
         )
     }
@@ -196,6 +350,14 @@ private struct SatelliteCoverageMapRepresentable: UIViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let line = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: line)
+                renderer.strokeColor = UIColor.systemCyan.withAlphaComponent(0.75)
+                renderer.lineWidth = 2
+                renderer.lineDashPattern = [6, 4]
+                return renderer
+            }
+
             guard let circle = overlay as? MKCircle else {
                 return MKOverlayRenderer(overlay: overlay)
             }
