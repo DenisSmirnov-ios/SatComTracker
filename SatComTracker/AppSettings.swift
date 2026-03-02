@@ -88,11 +88,12 @@ class AppSettings: ObservableObject {
         }
     }
 
-    private static let defaultBuiltInNoradIDs: [Int] = BuiltInGeostationaryLibrary.satellitesByNorad.keys.sorted()
-    private static let defaultBuiltInNoradIDsCSV: String = BuiltInGeostationaryLibrary.satellitesByNorad.keys
-        .sorted()
-        .map(String.init)
-        .joined(separator: ",")
+    private static var defaultBuiltInNoradIDs: [Int] {
+        SatelliteFrequencyLibraryStore.shared.availableNoradIDs
+    }
+    private static var defaultBuiltInNoradIDsCSV: String {
+        defaultBuiltInNoradIDs.map(String.init).joined(separator: ",")
+    }
     
     var noradIDs: [Int] {
         get {

@@ -61,16 +61,13 @@ struct SettingsView: View {
     
     var catalogSuggestions: [CatalogSatellite] {
         let existing = Set(settings.allActiveIDs)
-        return SatelliteCatalogLibrary.search(satelliteInput)
+        return libraryStore.searchCatalog(satelliteInput)
             .filter { !existing.contains($0.noradID) }
     }
 
     var estimatedPositionsRequestsPerHour: Double {
         guard settings.refreshInterval > 0 else { return 0 }
-        let remoteIDsCount = settings.allActiveIDs.filter {
-            BuiltInGeostationaryLibrary.satellitesByNorad[$0] == nil
-        }.count
-        return Double(remoteIDsCount) * (3600.0 / Double(settings.refreshInterval))
+        return Double(settings.allActiveIDs.count) * (3600.0 / Double(settings.refreshInterval))
     }
     
     var body: some View {
@@ -157,7 +154,7 @@ struct SettingsView: View {
                         settingsChanged = true
                     }
 
-                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении лимит расходуют только пользовательские спутники: одно обновление отправляет примерно 1 запрос positions на каждый такой спутник.")
+                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении одно обновление отправляет примерно 1 запрос positions на каждый спутник в активном списке.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -197,7 +194,7 @@ struct SettingsView: View {
                         activeDocumentPicker = .tle
                     }
                     
-                    Text("Подсказка: введите NORAD ID (например, 28117) или часть названия (например, UFO 11), затем выберите спутник из списка.")
+                    Text("Подсказка: введите NORAD ID или часть названия спутника из загруженной базы, затем выберите его из списка.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -253,7 +250,7 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Библиотека частот")) {
-                    Text("Встроенная библиотека содержит частоты транспондеров основных спутников Satcom. При необходимости вы можете дополнить или обновить эти данные вручную либо импортом из файла.")
+                    Text("Базовая библиотека и базовый список спутников загружаются с GitHub и кешируются локально до следующего обновления.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
 
@@ -317,7 +314,7 @@ struct SettingsView: View {
                         showingRestoreDefaultsConfirm = true
                     }
                     
-                    Text("Вернет встроенный список спутников и встроенную библиотеку частот. Все пользовательские изменения будут удалены.")
+                    Text("Сбросит локальный кэш библиотеки и список спутников до состояния после установки. Все пользовательские изменения будут удалены.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
@@ -616,6 +613,10 @@ struct SettingsView: View {
                 databaseURLString: settings.frequencyDatabaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
                 versionURLString: versionURL.isEmpty ? nil : versionURL
             )
+            if settings.allActiveIDs.isEmpty {
+                settings.noradIDs = libraryStore.availableNoradIDs
+                settingsChanged = true
+            }
             switch summary.mode {
             case .bootstrap:
                 githubSyncStatus = "Загружена полная библиотека с GitHub: \(summary.rowsCount) строк, \(summary.satellitesCount) спутников"

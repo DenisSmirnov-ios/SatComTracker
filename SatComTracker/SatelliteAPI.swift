@@ -35,26 +35,12 @@ class SatelliteAPI: ObservableObject {
         self.isLoading = true
         self.errorMessage = nil
         
-        let builtInIDs = noradIDs.filter { BuiltInGeostationaryLibrary.satellitesByNorad[$0] != nil }
-        let remoteIDs = noradIDs.filter { BuiltInGeostationaryLibrary.satellitesByNorad[$0] == nil }
-
         let batchSize = APIConfig.maxConcurrentRequests
         var allResults: [Int: Satellite] = [:]
-
-        for noradID in builtInIDs {
-            if let satellite = makeBuiltInGeostationarySatellite(
-                noradID: noradID,
-                observerLatitude: latitude,
-                observerLongitude: longitude,
-                observerAltitudeKm: altitude
-            ) {
-                allResults[noradID] = satellite
-            }
-        }
         
-        if !remoteIDs.isEmpty {
+        if !noradIDs.isEmpty {
             if !allowRemoteUpdates {
-                for id in remoteIDs {
+                for id in noradIDs {
                     if let existing = satellites.first(where: { $0.id == id }) {
                         allResults[id] = existing
                     } else {
@@ -63,12 +49,12 @@ class SatelliteAPI: ObservableObject {
                 }
             } else
             if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                for id in remoteIDs {
+                for id in noradIDs {
                     allResults[id] = createErrorSatellite(id: id, message: "Добавьте API-ключ для обновления пользовательских спутников")
                 }
             } else {
-                for start in stride(from: 0, to: remoteIDs.count, by: batchSize) {
-                    let chunk = Array(remoteIDs[start..<min(start + batchSize, remoteIDs.count)])
+                for start in stride(from: 0, to: noradIDs.count, by: batchSize) {
+                    let chunk = Array(noradIDs[start..<min(start + batchSize, noradIDs.count)])
                     let chunkResults = await withTaskGroup(of: Satellite?.self) { group in
                         for noradID in chunk {
                             group.addTask {
@@ -236,83 +222,5 @@ class SatelliteAPI: ObservableObject {
         let groundDistance = earthRadius * c
         let altDiff = satAlt - observerAlt
         return sqrt(groundDistance * groundDistance + altDiff * altDiff)
-    }
-
-    private func makeBuiltInGeostationarySatellite(
-        noradID: Int,
-        observerLatitude: Double,
-        observerLongitude: Double,
-        observerAltitudeKm: Double
-    ) -> Satellite? {
-        guard let builtIn = BuiltInGeostationaryLibrary.satellitesByNorad[noradID] else {
-            return nil
-        }
-
-        let look = calculateLookAngles(
-            observerLatitudeDeg: observerLatitude,
-            observerLongitudeDeg: observerLongitude,
-            observerAltitudeKm: observerAltitudeKm,
-            satelliteLongitudeDeg: builtIn.longitudeDeg,
-            satelliteAltitudeKm: builtIn.altitudeKm
-        )
-
-        return Satellite(
-            id: builtIn.noradID,
-            name: builtIn.name,
-            azimuth: look.azimuthDeg,
-            elevation: look.elevationDeg,
-            distanceKm: look.slantRangeKm,
-            velocity: 27600,
-            timestamp: Date(),
-            isError: false,
-            satelliteLatitude: 0,
-            satelliteLongitude: builtIn.longitudeDeg,
-            satelliteAltitudeKm: builtIn.altitudeKm,
-            observerLatitude: observerLatitude,
-            observerLongitude: observerLongitude
-        )
-    }
-
-    private func calculateLookAngles(
-        observerLatitudeDeg: Double,
-        observerLongitudeDeg: Double,
-        observerAltitudeKm: Double,
-        satelliteLongitudeDeg: Double,
-        satelliteAltitudeKm: Double
-    ) -> (azimuthDeg: Double, elevationDeg: Double, slantRangeKm: Double) {
-        let earthRadiusKm = 6378.137
-        let satelliteRadiusKm = earthRadiusKm + satelliteAltitudeKm
-
-        let lat = observerLatitudeDeg * .pi / 180
-        let lon = observerLongitudeDeg * .pi / 180
-        let satLon = satelliteLongitudeDeg * .pi / 180
-
-        let observerRadiusKm = earthRadiusKm + observerAltitudeKm
-        let xo = observerRadiusKm * cos(lat) * cos(lon)
-        let yo = observerRadiusKm * cos(lat) * sin(lon)
-        let zo = observerRadiusKm * sin(lat)
-
-        let xs = satelliteRadiusKm * cos(satLon)
-        let ys = satelliteRadiusKm * sin(satLon)
-        let zs = 0.0
-
-        let dx = xs - xo
-        let dy = ys - yo
-        let dz = zs - zo
-
-        let east = -sin(lon) * dx + cos(lon) * dy
-        let north = -sin(lat) * cos(lon) * dx - sin(lat) * sin(lon) * dy + cos(lat) * dz
-        let up = cos(lat) * cos(lon) * dx + cos(lat) * sin(lon) * dy + sin(lat) * dz
-
-        var azimuthDeg = atan2(east, north) * 180 / .pi
-        if azimuthDeg < 0 {
-            azimuthDeg += 360
-        }
-
-        let horizontal = sqrt(east * east + north * north)
-        let elevationDeg = atan2(up, horizontal) * 180 / .pi
-        let slantRangeKm = sqrt(dx * dx + dy * dy + dz * dz)
-
-        return (azimuthDeg, elevationDeg, slantRangeKm)
     }
 }

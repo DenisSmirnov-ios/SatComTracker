@@ -34,10 +34,12 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     
     @Published private(set) var overrideByNorad: [Int: [SatelliteFrequencyItem]]?
     @Published private(set) var mergedByNorad: [Int: [SatelliteFrequencyItem]] = [:]
+    @Published private(set) var satelliteNameByNorad: [Int: String] = [:]
     
     private struct PersistedState: Codable {
         var overrideByNorad: [Int: [SatelliteFrequencyItem]]?
         var mergedByNorad: [Int: [SatelliteFrequencyItem]]
+        var satelliteNameByNorad: [Int: String]
         var remoteVersion: String?
     }
     
@@ -60,6 +62,38 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         let hasMerged = mergedByNorad.values.contains { !$0.isEmpty }
         return hasBase || hasMerged
     }
+
+    var availableNoradIDs: [Int] {
+        let baseIDs = Set((overrideByNorad ?? SatelliteFrequencyLibrary.defaultByNorad).keys)
+        let nameIDs = Set(satelliteNameByNorad.keys)
+        return Array(baseIDs.union(nameIDs)).sorted()
+    }
+
+    func searchCatalog(_ query: String, limit: Int = 20) -> [CatalogSatellite] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let q = normalizeCatalogQuery(trimmed)
+        let items = availableCatalogSatellites
+        let exactStarts = items.filter { normalizeCatalogQuery($0.name).hasPrefix(q) }
+        let contains = items.filter { normalizeCatalogQuery($0.name).contains(q) || "\($0.noradID)".contains(trimmed) }
+
+        var result: [CatalogSatellite] = []
+        var seen = Set<Int>()
+        for sat in exactStarts + contains {
+            if seen.insert(sat.noradID).inserted {
+                result.append(sat)
+            }
+            if result.count >= limit { break }
+        }
+        return result
+    }
+
+    var availableCatalogSatellites: [CatalogSatellite] {
+        availableNoradIDs.map { norad in
+            CatalogSatellite(noradID: norad, name: satelliteNameByNorad[norad] ?? "NORAD \(norad)")
+        }
+    }
     
     @discardableResult
     func importFromFile(url: URL, mode: ImportMode) throws -> ImportSummary {
@@ -71,6 +105,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         case .replace:
             overrideByNorad = imported.byNorad
             mergedByNorad = [:]
+            satelliteNameByNorad.merge(imported.namesByNorad) { _, new in new }
             addedRows = imported.parsedRows
         case .merge:
             var nextMerged = mergedByNorad
@@ -97,6 +132,9 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
             }
             
             mergedByNorad = nextMerged
+            satelliteNameByNorad.merge(imported.namesByNorad) { current, new in
+                current.isEmpty ? new : current
+            }
         }
         
         save()
@@ -126,6 +164,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     func clearAllData() {
         overrideByNorad = [:]
         mergedByNorad = [:]
+        satelliteNameByNorad = [:]
         remoteVersion = nil
         save()
     }
@@ -133,6 +172,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
     func restoreBuiltInData() {
         overrideByNorad = nil
         mergedByNorad = [:]
+        satelliteNameByNorad = [:]
         remoteVersion = nil
         save()
     }
@@ -163,6 +203,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
                 remoteVersionURL: remoteVersionURL
             )
             overrideByNorad = downloaded.byNorad
+            satelliteNameByNorad = downloaded.namesByNorad
             remoteVersion = version
             save()
             return RemoteSyncSummary(
@@ -194,6 +235,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
             forceVersion: remoteVersion
         )
         overrideByNorad = downloaded.byNorad
+        satelliteNameByNorad = downloaded.namesByNorad
         self.remoteVersion = remoteVersion
         save()
         return RemoteSyncSummary(
@@ -295,6 +337,7 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         }
         overrideByNorad = decoded.overrideByNorad
         mergedByNorad = decoded.mergedByNorad
+        satelliteNameByNorad = decoded.satelliteNameByNorad
         remoteVersion = decoded.remoteVersion
     }
     
@@ -302,16 +345,26 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         let state = PersistedState(
             overrideByNorad: overrideByNorad,
             mergedByNorad: mergedByNorad,
+            satelliteNameByNorad: satelliteNameByNorad,
             remoteVersion: remoteVersion
         )
         guard let encoded = try? JSONEncoder().encode(state) else { return }
         UserDefaults.standard.set(encoded, forKey: storageKey)
+    }
+
+    private func normalizeCatalogQuery(_ value: String) -> String {
+        value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .replacingOccurrences(of: "  ", with: " ")
     }
 }
 
 private enum FrequencyImportParser {
     struct ParsedResult {
         let byNorad: [Int: [SatelliteFrequencyItem]]
+        let namesByNorad: [Int: String]
         let parsedRows: Int
         let duplicateRowsInSource: Int
     }
@@ -337,25 +390,55 @@ private enum FrequencyImportParser {
             throw ParseError.invalidStructure("CSV пуст")
         }
 
-        let header = lines[0].lowercased()
-        guard header.contains("rx"), header.contains("tx"), header.contains("norad") else {
+        let headerParts = lines[0].split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+        guard !headerParts.isEmpty else {
+            throw ParseError.invalidStructure("CSV не содержит обязательные колонки")
+        }
+
+        var rxIndex: Int?
+        var txIndex: Int?
+        var noradIndex: Int?
+        var nameIndex: Int?
+
+        for (index, value) in headerParts.enumerated() {
+            let normalized = normalizeHeader(value)
+            if normalized == "rx" || normalized.contains("receive") || normalized.contains("прием") || normalized.contains("приём") {
+                rxIndex = index
+            } else if normalized == "tx" || normalized.contains("uplink") || normalized.contains("transmit") {
+                txIndex = index
+            } else if normalized == "name" || normalized.contains("satellite") || normalized.contains("спутник") {
+                nameIndex = index
+            } else if normalized.contains("noradid") || normalized == "norad" || normalized.contains("satid") || normalized == "sat" {
+                noradIndex = index
+            }
+        }
+
+        guard let rxIndex, let txIndex, let noradIndex else {
             throw ParseError.invalidStructure("CSV не содержит обязательные колонки")
         }
 
         var byNorad: [Int: [SatelliteFrequencyItem]] = [:]
+        var namesByNorad: [Int: String] = [:]
         var seen = Set<String>()
         var parsedRows = 0
         var duplicateRows = 0
 
         for rawLine in lines.dropFirst() {
             let parts = rawLine.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
-            guard parts.count >= 5 else { continue }
+            guard parts.count > max(rxIndex, max(txIndex, noradIndex)) else { continue }
 
-            let rx = parseDouble(parts[0])
-            let tx = parseDouble(parts[1])
-            let norad = parseInt(parts[4])
+            let rx = parseDouble(parts[rxIndex])
+            let tx = parseDouble(parts[txIndex])
+            let norad = parseInt(parts[noradIndex])
             guard let norad else { continue }
             if rx == nil && tx == nil { continue }
+
+            if let nameIndex, parts.count > nameIndex {
+                let name = parts[nameIndex].trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty {
+                    namesByNorad[norad] = name
+                }
+            }
 
             let spacing: Double?
             if let rx, let tx {
@@ -381,7 +464,12 @@ private enum FrequencyImportParser {
             parsedRows += 1
         }
 
-        return ParsedResult(byNorad: byNorad, parsedRows: parsedRows, duplicateRowsInSource: duplicateRows)
+        return ParsedResult(
+            byNorad: byNorad,
+            namesByNorad: namesByNorad,
+            parsedRows: parsedRows,
+            duplicateRowsInSource: duplicateRows
+        )
     }
     
     private static func parseXLSX(url: URL) throws -> ParsedResult {
@@ -580,7 +668,7 @@ private enum FrequencyImportParser {
             }
         }
         
-        return ParsedResult(byNorad: byNorad, parsedRows: parsedRows, duplicateRowsInSource: duplicateRows)
+        return ParsedResult(byNorad: byNorad, namesByNorad: [:], parsedRows: parsedRows, duplicateRowsInSource: duplicateRows)
     }
     
     private static func parseDouble(_ raw: String) -> Double? {

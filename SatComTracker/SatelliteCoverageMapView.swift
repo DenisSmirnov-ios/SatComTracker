@@ -106,10 +106,8 @@ private struct SatelliteCoverageData {
 
     static func make(from satellite: Satellite) -> SatelliteCoverageData? {
         let latitude = satellite.satelliteLatitude ?? 0
-        let longitude = satellite.satelliteLongitude ?? BuiltInGeostationaryLibrary.satellitesByNorad[satellite.id]?.longitudeDeg
-
-        guard let longitude else { return nil }
-        let altitudeKm = satellite.satelliteAltitudeKm ?? BuiltInGeostationaryLibrary.geostationaryAltitudeKm
+        guard let longitude = satellite.satelliteLongitude else { return nil }
+        let altitudeKm = satellite.satelliteAltitudeKm ?? 35_786.0
 
         let fullRadius = coverageRadiusMeters(
             altitudeKm: altitudeKm,
