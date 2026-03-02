@@ -6,17 +6,29 @@ struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var settings: AppSettings
     @ObservedObject var locationManager: LocationManager
+    @ObservedObject private var libraryStore = SatelliteFrequencyLibraryStore.shared
     
-    @State private var newCustomID = ""
+    @State private var satelliteInput = ""
     @State private var showingClearAlert = false
     @State private var showingMapView = false
     @State private var showingTLEImporter = false
     @State private var tleImportStatus: String?
+    @State private var showingFrequencyImporter = false
+    @State private var frequencyImportStatus: String?
+    @State private var pendingFrequencyImportURL: URL?
+    @State private var showingFrequencyImportModeSheet = false
+    @State private var showingDeleteFrequenciesConfirmSheet = false
     
     @State private var settingsChanged = false
         
     var sortedSatelliteIDs: [Int] {
         settings.allActiveIDs.sorted()
+    }
+    
+    var catalogSuggestions: [CatalogSatellite] {
+        let existing = Set(settings.allActiveIDs)
+        return SatelliteCatalogLibrary.search(satelliteInput)
+            .filter { !existing.contains($0.noradID) }
     }
     
     var body: some View {
@@ -86,20 +98,44 @@ struct SettingsView: View {
                 
                 Section(header: Text("🛰️ Спутники (NORAD ID)")) {
                     HStack {
-                        TextField("NORAD ID", text: $newCustomID)
-                            .keyboardType(.numberPad)
+                        TextField("NORAD ID или название", text: $satelliteInput)
+                            .textInputAutocapitalization(.characters)
                         Button("Добавить") {
-                            if let id = Int(newCustomID), id > 0 {
-                                settings.addCustomID(id)
-                                newCustomID = ""
-                                settingsChanged = true
-                            }
+                            addSatelliteFromInput()
                         }
-                        .disabled(newCustomID.isEmpty)
+                        .disabled(satelliteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     
                     Button("Импортировать TLE файл") {
                         showingTLEImporter = true
+                    }
+                    
+                    Text("Подсказка: введите NORAD ID (например, 25544) или часть названия (например, GALAXY), затем выберите спутник из списка.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    if !catalogSuggestions.isEmpty {
+                        ForEach(catalogSuggestions) { satellite in
+                            Button {
+                                settings.addCustomID(satellite.noradID)
+                                settingsChanged = true
+                                satelliteInput = ""
+                            } label: {
+                                HStack {
+                                    Text(satellite.name)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("ID: \(satellite.noradID)")
+                                        .foregroundColor(.secondary)
+                                        .font(.caption)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else if !satelliteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Совпадений не найдено")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                     
                     if let status = tleImportStatus {
@@ -129,6 +165,22 @@ struct SettingsView: View {
                     }
                 }
                 
+                Section(header: Text("📚 Библиотека частот")) {
+                    Button("Импортировать данные библиотеки (PDF/XLSX)") {
+                        showingFrequencyImporter = true
+                    }
+                    
+                    Button("Удалить все данные частот", role: .destructive) {
+                        showingDeleteFrequenciesConfirmSheet = true
+                    }
+                    
+                    if let status = frequencyImportStatus {
+                        Text(status)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
                 Section {
                     Button("Очистить все спутники", role: .destructive) {
                         showingClearAlert = true
@@ -150,6 +202,53 @@ struct SettingsView: View {
                     settingsChanged = true
                 }
             }
+            .overlay {
+                if showingDeleteFrequenciesConfirmSheet {
+                    ZStack {
+                        Color.black.opacity(0.55)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                        
+                        FrequencyDataDeleteConfirmSheet(
+                            onConfirm: {
+                                clearAllFrequencyData()
+                                showingDeleteFrequenciesConfirmSheet = false
+                            },
+                            onCancel: {
+                                showingDeleteFrequenciesConfirmSheet = false
+                            }
+                        )
+                        .frame(maxWidth: 420)
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
+            .overlay {
+                if showingFrequencyImportModeSheet {
+                    ZStack {
+                        Color.black.opacity(0.45)
+                            .ignoresSafeArea()
+                            .contentShape(Rectangle())
+                        
+                        FrequencyImportModeSheet(
+                            onMerge: {
+                                executeFrequencyImport(mode: .merge)
+                                showingFrequencyImportModeSheet = false
+                            },
+                            onReplace: {
+                                executeFrequencyImport(mode: .replace)
+                                showingFrequencyImportModeSheet = false
+                            },
+                            onCancel: {
+                                pendingFrequencyImportURL = nil
+                                showingFrequencyImportModeSheet = false
+                            }
+                        )
+                        .frame(maxWidth: 420)
+                        .padding(.horizontal, 16)
+                    }
+                }
+            }
             .onChange(of: settings.locationSource) { newSource in
                 switch newSource {
                 case .gps:
@@ -168,6 +267,13 @@ struct SettingsView: View {
             ) { result in
                 handleTLEImport(result)
             }
+            .fileImporter(
+                isPresented: $showingFrequencyImporter,
+                allowedContentTypes: [.pdf, .xlsx],
+                allowsMultipleSelection: false
+            ) { result in
+                handleFrequencyImport(result)
+            }
             .onDisappear {
                 if settingsChanged {
                     NotificationCenter.default.post(name: .settingsChanged, object: nil)
@@ -179,6 +285,32 @@ struct SettingsView: View {
     private func removeSatelliteID(_ id: Int) {
         settings.noradIDs = settings.noradIDs.filter { $0 != id }
         settings.customIDs = settings.customIDs.filter { $0 != id }
+    }
+    
+    private func addSatelliteFromInput() {
+        let query = satelliteInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+        
+        if let id = Int(query), id > 0 {
+            settings.addCustomID(id)
+            settingsChanged = true
+            satelliteInput = ""
+            return
+        }
+        
+        if let exact = catalogSuggestions.first(where: { normalizeSearchText($0.name) == normalizeSearchText(query) }) {
+            settings.addCustomID(exact.noradID)
+            settingsChanged = true
+            satelliteInput = ""
+        }
+    }
+    
+    private func normalizeSearchText(_ text: String) -> String {
+        text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
     }
     
     private func handleTLEImport(_ result: Result<[URL], Error>) {
@@ -215,6 +347,49 @@ struct SettingsView: View {
         } catch {
             tleImportStatus = "Не удалось прочитать файл: \(error.localizedDescription)"
         }
+    }
+    
+    private func handleFrequencyImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            frequencyImportStatus = "Ошибка импорта частот: \(error.localizedDescription)"
+        case .success(let urls):
+            guard let url = urls.first else {
+                frequencyImportStatus = "Файл частот не выбран"
+                return
+            }
+            pendingFrequencyImportURL = url
+            showingFrequencyImportModeSheet = true
+        }
+    }
+    
+    private func executeFrequencyImport(mode: SatelliteFrequencyLibraryStore.ImportMode) {
+        guard let url = pendingFrequencyImportURL else {
+            frequencyImportStatus = "Файл частот не выбран"
+            return
+        }
+        
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+            pendingFrequencyImportURL = nil
+        }
+        
+        do {
+            let summary = try libraryStore.importFromFile(url: url, mode: mode)
+            let modeText = summary.mode == .replace ? "Полная замена" : "Объединение"
+            frequencyImportStatus = "\(modeText): добавлено \(summary.addedRows), дубликатов \(summary.duplicateRows), спутников \(summary.satellitesAffected)"
+        } catch {
+            frequencyImportStatus = "Не удалось импортировать частоты: \(error.localizedDescription)"
+        }
+    }
+    
+    private func clearAllFrequencyData() {
+        libraryStore.clearAllData()
+        SatelliteFrequencyStateStore.shared.clearAll()
+        frequencyImportStatus = "Все данные частот удалены"
     }
     
     private func extractNORADIDs(fromTLEText text: String) -> [Int] {
@@ -430,5 +605,199 @@ struct SettingsView: View {
                 .padding(.top, 4)
         }
         .padding(.vertical, 4)
+    }
+}
+
+private extension UTType {
+    static var xlsx: UTType {
+        UTType(filenameExtension: "xlsx") ?? .data
+    }
+}
+
+private struct FrequencyDataDeleteConfirmSheet: View {
+    let onConfirm: () -> Void
+    let onCancel: () -> Void
+    @State private var offsetX: CGFloat = 0
+    @State private var offsetY: CGFloat = 0
+    private let knobSize: CGFloat = 52
+    
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Color.red.opacity(0.08), Color.orange.opacity(0.08), Color.clear],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 18) {
+                ZStack {
+                    Circle()
+                        .fill(Color.red.opacity(0.14))
+                        .frame(width: 70, height: 70)
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundColor(.red)
+                }
+                
+                VStack(spacing: 8) {
+                    Text("Вы точно уверены?")
+                        .font(.title3)
+                        .fontWeight(.bold)
+                    
+                    Text("Все данные о частотах будут уничтожены без возможности восстановления.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Удалится предустановленная библиотека частот", systemImage: "trash")
+                    Label("Удалятся данные, добавленные пользователем", systemImage: "person.crop.circle.badge.xmark")
+                    Label("Удалятся комментарии и статусы каналов", systemImage: "bubble.left.and.exclamationmark.bubble.right")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.white.opacity(0.55))
+                .cornerRadius(12)
+                
+                GeometryReader { geometry in
+                    let trackWidth = min(geometry.size.width, 360)
+                    let maxOffset = trackWidth - knobSize
+                    
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 28)
+                            .fill(Color.red.opacity(0.14))
+                            .frame(width: trackWidth, height: 56)
+                        
+                        Text("Да, удалить все данные!")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.red)
+                            .frame(width: trackWidth, height: 56)
+                        
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: knobSize, height: knobSize)
+                            .overlay(
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.white)
+                                    .font(.headline)
+                            )
+                            .offset(x: offsetX)
+                            .gesture(
+                                DragGesture()
+                                    .onChanged { value in
+                                        offsetX = max(0, min(value.translation.width, maxOffset))
+                                    }
+                                    .onEnded { _ in
+                                        if offsetX >= maxOffset * 0.88 {
+                                            onConfirm()
+                                        } else {
+                                            withAnimation(.easeOut(duration: 0.2)) {
+                                                offsetX = 0
+                                            }
+                                        }
+                                    }
+                            )
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .frame(height: 56)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Color(.systemBackground))
+            )
+            .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
+            .offset(y: offsetY)
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        offsetY = value.translation.height
+                    }
+                    .onEnded { value in
+                        if abs(value.translation.height) > 100 {
+                            onCancel()
+                        } else {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                offsetY = 0
+                            }
+                        }
+                    }
+            )
+        }
+    }
+}
+
+private struct FrequencyImportModeSheet: View {
+    let onMerge: () -> Void
+    let onReplace: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Spacer()
+                Button("Отмена") { onCancel() }
+            }
+            
+            Image(systemName: "tray.and.arrow.down.fill")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundColor(.blue)
+            
+            Text("Как обновить библиотеку?")
+                .font(.title3)
+                .fontWeight(.bold)
+            
+            Text("Выберите, как применить данные из выбранного файла частот.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            
+            Button {
+                onMerge()
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Объединить данные библиотеки")
+                        .font(.headline)
+                    Text("Добавить новые частоты, дубликаты не трогать")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.blue.opacity(0.10))
+                .cornerRadius(12)
+            }
+            .buttonStyle(.plain)
+            
+            Button {
+                onReplace()
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Полностью заменить библиотеку")
+                        .font(.headline)
+                        .foregroundColor(.orange)
+                    Text("Стереть текущие данные и загрузить только из файла")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Color.orange.opacity(0.10))
+                .cornerRadius(12)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(.systemBackground))
+        )
+        .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
     }
 }

@@ -70,9 +70,10 @@ struct Triangle: Shape {
 struct SatelliteDetailView: View {
     let satellite: Satellite
     @ObservedObject var compassManager: CompassManager
+    @ObservedObject private var libraryStore = SatelliteFrequencyLibraryStore.shared
     
     private var libraryChannels: [SatelliteFrequencyItem] {
-        SatelliteFrequencyLibrary.channels(for: satellite)
+        libraryStore.channels(for: satellite)
     }
     
     private let timeFormatter: DateFormatter = {
@@ -96,9 +97,7 @@ struct SatelliteDetailView: View {
                     CompassSection(satellite: satellite, compassManager: compassManager)
                 }
                 
-                if !libraryChannels.isEmpty {
-                    LibraryFrequenciesSection(satelliteId: satellite.id, channels: libraryChannels)
-                }
+                LibraryFrequenciesSection(satelliteId: satellite.id, channels: libraryChannels)
             }
             .padding()
         }
@@ -117,16 +116,19 @@ struct LibraryFrequenciesSection: View {
     let satelliteId: Int
     let channels: [SatelliteFrequencyItem]
     @ObservedObject private var stateStore = SatelliteFrequencyStateStore.shared
+    private let libraryStore = SatelliteFrequencyLibraryStore.shared
     
     @State private var editingItem: SatelliteFrequencyItem?
-    @State private var commentDraft: String = ""
+    @State private var showOnlyWorking = false
+    @State private var showingAddEditor = false
     
     private var visibleChannels: [SatelliteFrequencyItem] {
-        channels.filter { !stateStore.state(for: satelliteId, item: $0).isDeleted }
-    }
-    
-    private var hiddenCount: Int {
-        channels.count - visibleChannels.count
+        channels.filter { item in
+            let state = stateStore.state(for: satelliteId, item: item)
+            if state.isDeleted { return false }
+            if showOnlyWorking && state.isNotWorking { return false }
+            return true
+        }
     }
     
     var body: some View {
@@ -135,10 +137,21 @@ struct LibraryFrequenciesSection: View {
                 Label("RX/TX Частоты", systemImage: "dot.radiowaves.left.and.right")
                     .font(.headline)
                 Spacer()
+                Button {
+                    showingAddEditor = true
+                } label: {
+                    Label("Добавить", systemImage: "plus.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                
                 Text("\(visibleChannels.count)")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+            
+            Toggle("Только рабочие каналы", isOn: $showOnlyWorking)
+                .font(.caption)
             
             if visibleChannels.isEmpty {
                 Text("Нет активных частот в списке")
@@ -147,13 +160,14 @@ struct LibraryFrequenciesSection: View {
             } else {
                 ForEach(visibleChannels) { item in
                     let state = stateStore.state(for: satelliteId, item: item)
+                    let effectiveItem = stateStore.effectiveItem(for: satelliteId, item: item)
                     
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
-                            Text("RX \(format(item.rxMHz))")
+                            Text("RX \(format(effectiveItem.rxMHz))")
                                 .font(.caption)
                                 .foregroundColor(.green)
-                            Text("TX \(format(item.txMHz))")
+                            Text("TX \(format(effectiveItem.txMHz))")
                                 .font(.caption)
                                 .foregroundColor(.orange)
                             Spacer()
@@ -169,8 +183,11 @@ struct LibraryFrequenciesSection: View {
                             }
                             
                             Menu {
+                                Button("Редактировать канал") {
+                                    editingItem = item
+                                }
+                                
                                 Button("Комментарий") {
-                                    commentDraft = state.comment
                                     editingItem = item
                                 }
                                 
@@ -178,13 +195,23 @@ struct LibraryFrequenciesSection: View {
                                     stateStore.setNotWorking(!state.isNotWorking, for: satelliteId, item: item)
                                 }
                                 
-                                Button("Удалить из списка", role: .destructive) {
+                                Button("Удалить канал навсегда", role: .destructive) {
                                     stateStore.setDeleted(true, for: satelliteId, item: item)
                                 }
                             } label: {
                                 Image(systemName: "ellipsis.circle")
                                     .foregroundColor(.secondary)
                             }
+                        }
+                        
+                        HStack(spacing: 10) {
+                            Text("Разнос: \(format(effectiveItem.spacingMHz))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Text("Ширина: \(formatWidth(effectiveItem.channelWidthKHz))")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            Spacer()
                         }
                         
                         if !state.comment.isEmpty {
@@ -198,23 +225,49 @@ struct LibraryFrequenciesSection: View {
                 }
             }
             
-            if hiddenCount > 0 {
-                Button("Восстановить удаленные (\(hiddenCount))") {
-                    stateStore.restoreAllDeleted(for: satelliteId)
-                }
-                .font(.caption)
-            }
         }
         .padding()
         .background(Color.gray.opacity(0.08))
         .cornerRadius(12)
         .sheet(item: $editingItem) { item in
-            FrequencyCommentEditorView(
-                initialComment: commentDraft,
+            FrequencyChannelEditorView(
+                initialItem: stateStore.effectiveItem(for: satelliteId, item: item),
+                initialComment: stateStore.state(for: satelliteId, item: item).comment,
                 isNotWorking: stateStore.state(for: satelliteId, item: item).isNotWorking,
-                onSave: { comment, isNotWorking in
+                onSave: { rx, tx, spacing, width, comment, isNotWorking in
+                    stateStore.setChannelEdits(
+                        rxMHz: rx,
+                        txMHz: tx,
+                        spacingMHz: spacing,
+                        channelWidthKHz: width,
+                        for: satelliteId,
+                        item: item
+                    )
                     stateStore.setComment(comment, for: satelliteId, item: item)
                     stateStore.setNotWorking(isNotWorking, for: satelliteId, item: item)
+                }
+            )
+        }
+        .sheet(isPresented: $showingAddEditor) {
+            FrequencyChannelEditorView(
+                initialItem: SatelliteFrequencyItem(rxMHz: nil, txMHz: nil, spacingMHz: nil, channelWidthKHz: nil),
+                initialComment: "",
+                isNotWorking: false,
+                onSave: { rx, tx, spacing, width, comment, isNotWorking in
+                    guard rx != nil || tx != nil else { return }
+                    let newItem = SatelliteFrequencyItem(
+                        rxMHz: rx,
+                        txMHz: tx,
+                        spacingMHz: spacing,
+                        channelWidthKHz: width
+                    )
+                    libraryStore.addUserChannel(noradId: satelliteId, item: newItem)
+                    if !comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        stateStore.setComment(comment, for: satelliteId, item: newItem)
+                    }
+                    if isNotWorking {
+                        stateStore.setNotWorking(true, for: satelliteId, item: newItem)
+                    }
                 }
             )
         }
@@ -224,21 +277,41 @@ struct LibraryFrequenciesSection: View {
         guard let value else { return "—" }
         return String(format: "%.3f MHz", value)
     }
+    
+    private func formatWidth(_ value: Int?) -> String {
+        guard let value else { return "—" }
+        return "\(value) кГц"
+    }
 }
 
-struct FrequencyCommentEditorView: View {
+struct FrequencyChannelEditorView: View {
+    let initialItem: SatelliteFrequencyItem
     let initialComment: String
     let isNotWorking: Bool
-    let onSave: (String, Bool) -> Void
+    let onSave: (Double?, Double?, Double?, Int?, String, Bool) -> Void
     
     @Environment(\.dismiss) private var dismiss
+    @State private var rxDraft: String
+    @State private var txDraft: String
+    @State private var spacingDraft: String
+    @State private var widthDraft: String
     @State private var comment: String
     @State private var notWorking: Bool
     
-    init(initialComment: String, isNotWorking: Bool, onSave: @escaping (String, Bool) -> Void) {
+    init(
+        initialItem: SatelliteFrequencyItem,
+        initialComment: String,
+        isNotWorking: Bool,
+        onSave: @escaping (Double?, Double?, Double?, Int?, String, Bool) -> Void
+    ) {
+        self.initialItem = initialItem
         self.initialComment = initialComment
         self.isNotWorking = isNotWorking
         self.onSave = onSave
+        _rxDraft = State(initialValue: Self.formatDouble(initialItem.rxMHz))
+        _txDraft = State(initialValue: Self.formatDouble(initialItem.txMHz))
+        _spacingDraft = State(initialValue: Self.formatDouble(initialItem.spacingMHz))
+        _widthDraft = State(initialValue: initialItem.channelWidthKHz.map(String.init) ?? "")
         _comment = State(initialValue: initialComment)
         _notWorking = State(initialValue: isNotWorking)
     }
@@ -246,6 +319,17 @@ struct FrequencyCommentEditorView: View {
     var body: some View {
         NavigationView {
             Form {
+                Section(header: Text("Параметры канала")) {
+                    TextField("RX, MHz", text: $rxDraft)
+                        .keyboardType(.decimalPad)
+                    TextField("TX, MHz", text: $txDraft)
+                        .keyboardType(.decimalPad)
+                    TextField("Разнос, MHz", text: $spacingDraft)
+                        .keyboardType(.decimalPad)
+                    TextField("Ширина, кГц", text: $widthDraft)
+                        .keyboardType(.numberPad)
+                }
+                
                 Section(header: Text("Комментарий")) {
                     TextEditor(text: $comment)
                         .frame(minHeight: 120)
@@ -262,12 +346,46 @@ struct FrequencyCommentEditorView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Сохранить") {
-                        onSave(comment, notWorking)
+                        let rx = parseDouble(rxDraft)
+                        let tx = parseDouble(txDraft)
+                        let spacing = parseDouble(spacingDraft)
+                        let width = parseInt(widthDraft)
+                        onSave(rx, tx, spacing, width, comment, notWorking)
                         dismiss()
                     }
                 }
             }
         }
+        .onChange(of: rxDraft) { _ in
+            recalculateSpacing()
+        }
+        .onChange(of: txDraft) { _ in
+            recalculateSpacing()
+        }
+    }
+    
+    private func recalculateSpacing() {
+        guard let rx = parseDouble(rxDraft), let tx = parseDouble(txDraft) else { return }
+        spacingDraft = Self.formatDouble(abs(tx - rx))
+    }
+    
+    private func parseDouble(_ value: String) -> Double? {
+        let cleaned = value
+            .replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return Double(cleaned)
+    }
+    
+    private func parseInt(_ value: String) -> Int? {
+        let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return Int(cleaned)
+    }
+    
+    private static func formatDouble(_ value: Double?) -> String {
+        guard let value else { return "" }
+        return String(format: "%.3f", value)
     }
 }
 

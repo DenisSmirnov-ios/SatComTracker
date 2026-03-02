@@ -68,8 +68,6 @@ struct MapLocationView: View {
                     
                     VStack {
                         HStack {
-                            Spacer()
-                            
                             Menu {
                                 Button("Схема") { mapType = .standard }
                                 Button("Спутник") { mapType = .satellite }
@@ -81,7 +79,10 @@ struct MapLocationView: View {
                                     .clipShape(Circle())
                                     .shadow(radius: 3)
                             }
-                            .padding()
+                            .padding(.leading, 12)
+                            .padding(.top, 12)
+                            
+                            Spacer()
                         }
                         
                         Spacer()

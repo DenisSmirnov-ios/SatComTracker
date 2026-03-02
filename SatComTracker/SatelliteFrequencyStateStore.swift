@@ -8,6 +8,10 @@ final class SatelliteFrequencyStateStore: ObservableObject {
         var comment: String = ""
         var isNotWorking: Bool = false
         var isDeleted: Bool = false
+        var editedRxMHz: Double?
+        var editedTxMHz: Double?
+        var editedSpacingMHz: Double?
+        var editedChannelWidthKHz: Int?
     }
     
     @Published private(set) var statesBySatellite: [Int: [String: FrequencyState]] = [:]
@@ -41,12 +45,33 @@ final class SatelliteFrequencyStateStore: ObservableObject {
         }
     }
     
-    func restoreAllDeleted(for satelliteId: Int) {
-        guard var satStates = statesBySatellite[satelliteId] else { return }
-        for key in satStates.keys {
-            satStates[key]?.isDeleted = false
+    func setChannelEdits(
+        rxMHz: Double?,
+        txMHz: Double?,
+        spacingMHz: Double?,
+        channelWidthKHz: Int?,
+        for satelliteId: Int,
+        item: SatelliteFrequencyItem
+    ) {
+        update(satelliteId: satelliteId, key: item.storageKey) { state in
+            state.editedRxMHz = rxMHz
+            state.editedTxMHz = txMHz
+            state.editedSpacingMHz = spacingMHz
+            state.editedChannelWidthKHz = channelWidthKHz
         }
-        statesBySatellite[satelliteId] = satStates
+    }
+    
+    func effectiveItem(for satelliteId: Int, item: SatelliteFrequencyItem) -> SatelliteFrequencyItem {
+        let state = state(for: satelliteId, item: item)
+        let rx = state.editedRxMHz ?? item.rxMHz
+        let tx = state.editedTxMHz ?? item.txMHz
+        let spacing = state.editedSpacingMHz ?? item.spacingMHz
+        let width = state.editedChannelWidthKHz ?? item.channelWidthKHz
+        return SatelliteFrequencyItem(rxMHz: rx, txMHz: tx, spacingMHz: spacing, channelWidthKHz: width)
+    }
+    
+    func clearAll() {
+        statesBySatellite = [:]
         save()
         objectWillChange.send()
     }
