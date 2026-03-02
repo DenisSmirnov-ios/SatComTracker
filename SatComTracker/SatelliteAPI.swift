@@ -23,6 +23,7 @@ class SatelliteAPI: ObservableObject {
     @MainActor
     func fetchSatellites(apiKey: String, noradIDs: [Int], latitude: Double, longitude: Double,
                         altitude: Double = 0, refreshInterval: Int, forceRefresh: Bool = false,
+                        allowRemoteUpdates: Bool = true,
                         onCacheUpdated: (() -> Void)? = nil) async {
         
         if !forceRefresh, let cached = getValidCache(latitude: latitude, longitude: longitude, maxAge: refreshInterval) {
@@ -34,28 +35,59 @@ class SatelliteAPI: ObservableObject {
         self.isLoading = true
         self.errorMessage = nil
         
+        let builtInIDs = noradIDs.filter { BuiltInGeostationaryLibrary.satellitesByNorad[$0] != nil }
+        let remoteIDs = noradIDs.filter { BuiltInGeostationaryLibrary.satellitesByNorad[$0] == nil }
+
         let batchSize = APIConfig.maxConcurrentRequests
         var allResults: [Int: Satellite] = [:]
-        
-        for start in stride(from: 0, to: noradIDs.count, by: batchSize) {
-            let chunk = Array(noradIDs[start..<min(start + batchSize, noradIDs.count)])
-            let chunkResults = await withTaskGroup(of: Satellite?.self) { group in
-                for noradID in chunk {
-                    group.addTask {
-                        await self.fetchSingleSatellite(noradID: noradID, apiKey: apiKey,
-                                                       latitude: latitude, longitude: longitude, altitude: altitude)
-                    }
-                }
-                var results: [Int: Satellite] = [:]
-                for await result in group {
-                    if let satellite = result {
-                        results[satellite.id] = satellite
-                    }
-                }
-                return results
+
+        for noradID in builtInIDs {
+            if let satellite = makeBuiltInGeostationarySatellite(
+                noradID: noradID,
+                observerLatitude: latitude,
+                observerLongitude: longitude,
+                observerAltitudeKm: altitude
+            ) {
+                allResults[noradID] = satellite
             }
-            for (id, satellite) in chunkResults {
-                allResults[id] = satellite
+        }
+        
+        if !remoteIDs.isEmpty {
+            if !allowRemoteUpdates {
+                for id in remoteIDs {
+                    if let existing = satellites.first(where: { $0.id == id }) {
+                        allResults[id] = existing
+                    } else {
+                        allResults[id] = createErrorSatellite(id: id, message: "Обновление пользовательских спутников отключено")
+                    }
+                }
+            } else
+            if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                for id in remoteIDs {
+                    allResults[id] = createErrorSatellite(id: id, message: "Добавьте API-ключ для обновления пользовательских спутников")
+                }
+            } else {
+                for start in stride(from: 0, to: remoteIDs.count, by: batchSize) {
+                    let chunk = Array(remoteIDs[start..<min(start + batchSize, remoteIDs.count)])
+                    let chunkResults = await withTaskGroup(of: Satellite?.self) { group in
+                        for noradID in chunk {
+                            group.addTask {
+                                await self.fetchSingleSatellite(noradID: noradID, apiKey: apiKey,
+                                                               latitude: latitude, longitude: longitude, altitude: altitude)
+                            }
+                        }
+                        var results: [Int: Satellite] = [:]
+                        for await result in group {
+                            if let satellite = result {
+                                results[satellite.id] = satellite
+                            }
+                        }
+                        return results
+                    }
+                    for (id, satellite) in chunkResults {
+                        allResults[id] = satellite
+                    }
+                }
             }
         }
         
@@ -130,7 +162,12 @@ class SatelliteAPI: ObservableObject {
                         ),
                         velocity: 27600,
                         timestamp: Date(timeIntervalSince1970: pos.timestamp),
-                        isError: false
+                        isError: false,
+                        satelliteLatitude: pos.satlatitude,
+                        satelliteLongitude: pos.satlongitude,
+                        satelliteAltitudeKm: pos.sataltitude,
+                        observerLatitude: latitude,
+                        observerLongitude: longitude
                     )
                     
                 case 429:
@@ -182,7 +219,9 @@ class SatelliteAPI: ObservableObject {
     
     private func createErrorSatellite(id: Int, message: String) -> Satellite {
         Satellite(id: id, name: "ID: \(id)", azimuth: 0, elevation: -90,
-                 distanceKm: 0, velocity: 0, timestamp: Date(), isError: true, errorMessage: message)
+                 distanceKm: 0, velocity: 0, timestamp: Date(), isError: true, errorMessage: message,
+                 satelliteLatitude: nil, satelliteLongitude: nil, satelliteAltitudeKm: nil,
+                 observerLatitude: nil, observerLongitude: nil)
     }
     
     private func calculateDistance(observerLat: Double, observerLon: Double, observerAlt: Double,
@@ -197,5 +236,83 @@ class SatelliteAPI: ObservableObject {
         let groundDistance = earthRadius * c
         let altDiff = satAlt - observerAlt
         return sqrt(groundDistance * groundDistance + altDiff * altDiff)
+    }
+
+    private func makeBuiltInGeostationarySatellite(
+        noradID: Int,
+        observerLatitude: Double,
+        observerLongitude: Double,
+        observerAltitudeKm: Double
+    ) -> Satellite? {
+        guard let builtIn = BuiltInGeostationaryLibrary.satellitesByNorad[noradID] else {
+            return nil
+        }
+
+        let look = calculateLookAngles(
+            observerLatitudeDeg: observerLatitude,
+            observerLongitudeDeg: observerLongitude,
+            observerAltitudeKm: observerAltitudeKm,
+            satelliteLongitudeDeg: builtIn.longitudeDeg,
+            satelliteAltitudeKm: builtIn.altitudeKm
+        )
+
+        return Satellite(
+            id: builtIn.noradID,
+            name: builtIn.name,
+            azimuth: look.azimuthDeg,
+            elevation: look.elevationDeg,
+            distanceKm: look.slantRangeKm,
+            velocity: 27600,
+            timestamp: Date(),
+            isError: false,
+            satelliteLatitude: 0,
+            satelliteLongitude: builtIn.longitudeDeg,
+            satelliteAltitudeKm: builtIn.altitudeKm,
+            observerLatitude: observerLatitude,
+            observerLongitude: observerLongitude
+        )
+    }
+
+    private func calculateLookAngles(
+        observerLatitudeDeg: Double,
+        observerLongitudeDeg: Double,
+        observerAltitudeKm: Double,
+        satelliteLongitudeDeg: Double,
+        satelliteAltitudeKm: Double
+    ) -> (azimuthDeg: Double, elevationDeg: Double, slantRangeKm: Double) {
+        let earthRadiusKm = 6378.137
+        let satelliteRadiusKm = earthRadiusKm + satelliteAltitudeKm
+
+        let lat = observerLatitudeDeg * .pi / 180
+        let lon = observerLongitudeDeg * .pi / 180
+        let satLon = satelliteLongitudeDeg * .pi / 180
+
+        let observerRadiusKm = earthRadiusKm + observerAltitudeKm
+        let xo = observerRadiusKm * cos(lat) * cos(lon)
+        let yo = observerRadiusKm * cos(lat) * sin(lon)
+        let zo = observerRadiusKm * sin(lat)
+
+        let xs = satelliteRadiusKm * cos(satLon)
+        let ys = satelliteRadiusKm * sin(satLon)
+        let zs = 0.0
+
+        let dx = xs - xo
+        let dy = ys - yo
+        let dz = zs - zo
+
+        let east = -sin(lon) * dx + cos(lon) * dy
+        let north = -sin(lat) * cos(lon) * dx - sin(lat) * sin(lon) * dy + cos(lat) * dz
+        let up = cos(lat) * cos(lon) * dx + cos(lat) * sin(lon) * dy + sin(lat) * dz
+
+        var azimuthDeg = atan2(east, north) * 180 / .pi
+        if azimuthDeg < 0 {
+            azimuthDeg += 360
+        }
+
+        let horizontal = sqrt(east * east + north * north)
+        let elevationDeg = atan2(up, horizontal) * 180 / .pi
+        let slantRangeKm = sqrt(dx * dx + dy * dy + dz * dz)
+
+        return (azimuthDeg, elevationDeg, slantRangeKm)
     }
 }

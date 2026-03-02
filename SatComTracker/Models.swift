@@ -21,6 +21,11 @@ struct Satellite: Identifiable, Codable {
     var timestamp: Date
     var isError: Bool
     var errorMessage: String?
+    var satelliteLatitude: Double?
+    var satelliteLongitude: Double?
+    var satelliteAltitudeKm: Double?
+    var observerLatitude: Double?
+    var observerLongitude: Double?
     
     var isVisible: Bool {
         !isError && elevation >= 0

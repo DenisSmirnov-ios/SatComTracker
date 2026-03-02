@@ -5,7 +5,7 @@ import Combine
 
 class AppSettings: ObservableObject {
     @AppStorage("apiKey") var apiKey: String = ""
-    @AppStorage("noradIDs") var noradIDsString: String = ""
+    @AppStorage("noradIDs") var noradIDsString: String = AppSettings.defaultBuiltInNoradIDsCSV
     @AppStorage("customIDs") var customIDsString: String = ""
     @AppStorage("refreshInterval") var refreshInterval: Int = 3600
     @AppStorage("lastCacheUpdateTime") private var lastCacheUpdateTime: TimeInterval = Date.distantPast.timeIntervalSince1970
@@ -15,6 +15,8 @@ class AppSettings: ObservableObject {
     @AppStorage("manualLongitude") var manualLongitude: String = "37.6173"
     @AppStorage("lastSelectedAddress") var lastSelectedAddress: String = ""
     @AppStorage("themeMode") private var themeModeRaw: String = ThemeMode.system.rawValue
+    @AppStorage("didInitializeBuiltInSatellites") private var didInitializeBuiltInSatellites: Bool = false
+    @AppStorage("updateMode") private var updateModeRaw: String = UpdateMode.automatic.rawValue
     
     enum LocationSource: String, CaseIterable {
         case gps = "GPS"
@@ -51,8 +53,44 @@ class AppSettings: ObservableObject {
             }
         }
     }
+
+    enum UpdateMode: String, CaseIterable {
+        case automatic = "automatic"
+        case onDemand = "on_demand"
+        case disabled = "disabled"
+
+        var title: String {
+            switch self {
+            case .automatic: return "Автоматически"
+            case .onDemand: return "По запросу"
+            case .disabled: return "Отключено"
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .automatic: return "Обновление по выбранному интервалу"
+            case .onDemand: return "Обновление только при нажатии кнопки"
+            case .disabled: return "Обновление полностью отключено"
+            }
+        }
+    }
     
-    init() {}
+    init() {
+        if !didInitializeBuiltInSatellites {
+            let hasAnySatellites = !noradIDs.isEmpty || !customIDs.isEmpty
+            if !hasAnySatellites {
+                noradIDs = AppSettings.defaultBuiltInNoradIDs
+            }
+            didInitializeBuiltInSatellites = true
+        }
+    }
+
+    private static let defaultBuiltInNoradIDs: [Int] = SatelliteFrequencyLibrary.defaultByNorad.keys.sorted()
+    private static let defaultBuiltInNoradIDsCSV: String = SatelliteFrequencyLibrary.defaultByNorad.keys
+        .sorted()
+        .map(String.init)
+        .joined(separator: ",")
     
     var noradIDs: [Int] {
         get {
@@ -83,7 +121,7 @@ class AppSettings: ObservableObject {
     }
     
     var isConfigured: Bool {
-        !apiKey.isEmpty && !allActiveIDs.isEmpty
+        !allActiveIDs.isEmpty
     }
     
     var refreshIntervalText: String {
@@ -111,6 +149,14 @@ class AppSettings: ObservableObject {
         case .system: return nil
         case .light: return .light
         case .dark: return .dark
+        }
+    }
+
+    var updateMode: UpdateMode {
+        get { UpdateMode(rawValue: updateModeRaw) ?? .automatic }
+        set {
+            updateModeRaw = newValue.rawValue
+            objectWillChange.send()
         }
     }
     
@@ -160,10 +206,21 @@ class AppSettings: ObservableObject {
     func removeCustomID(_ noradID: Int) {
         customIDs = customIDs.filter { $0 != noradID }
     }
+
+    func removeSatellite(_ noradID: Int) {
+        noradIDs = noradIDs.filter { $0 != noradID }
+        customIDs = customIDs.filter { $0 != noradID }
+    }
     
     func clearAllSatellites() {
         noradIDs = []
         customIDs = []
+    }
+
+    func restoreInstalledDefaults() {
+        noradIDs = AppSettings.defaultBuiltInNoradIDs
+        customIDs = []
+        lastCacheUpdate = Date.distantPast
     }
     
     var lastCacheUpdate: Date {

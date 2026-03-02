@@ -75,6 +75,7 @@ struct SatelliteDetailView: View {
     let satellite: Satellite
     @ObservedObject var compassManager: CompassManager
     @ObservedObject private var libraryStore = SatelliteFrequencyLibraryStore.shared
+    @State private var showingCoverageMap = false
     
     private var libraryChannels: [SatelliteFrequencyItem] {
         libraryStore.channels(for: satellite)
@@ -92,6 +93,14 @@ struct SatelliteDetailView: View {
             VStack(spacing: 24) {
                 HeaderView(satellite: satellite)
                 UpdateTimeView(timestamp: satellite.timestamp, timeFormatter: timeFormatter)
+                Button {
+                    showingCoverageMap = true
+                } label: {
+                    Label("Показать карту покрытия", systemImage: "map.fill")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
                 
                 if !satellite.isVisible {
                     BelowHorizonWarning(elevation: satellite.elevation)
@@ -113,6 +122,9 @@ struct SatelliteDetailView: View {
         }
         .onDisappear {
             compassManager.stop()
+        }
+        .fullScreenCover(isPresented: $showingCoverageMap) {
+            SatelliteCoverageMapView(satellite: satellite)
         }
     }
 }
@@ -168,73 +180,77 @@ struct LibraryFrequenciesSection: View {
                     let state = stateStore.state(for: satelliteId, item: item)
                     let effectiveItem = stateStore.effectiveItem(for: satelliteId, item: item)
                     
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 10) {
-                            Text("RX \(format(effectiveItem.rxMHz))")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundColor(.green)
-                            Text("TX \(format(effectiveItem.txMHz))")
-                                .font(.system(size: 13, weight: .semibold, design: .rounded))
-                                .foregroundColor(.orange)
-                            Spacer()
+                    SwipeDeleteCardRow(
+                        onDelete: { stateStore.setDeleted(true, for: satelliteId, item: item) }
+                    ) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 10) {
+                                Text("RX \(format(effectiveItem.rxMHz))")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.green)
+                                Text("TX \(format(effectiveItem.txMHz))")
+                                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.orange)
+                                Spacer()
+                                
+                                if state.isNotWorking {
+                                    Text("offline")
+                                        .font(.caption2)
+                                        .foregroundColor(.red)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.red.opacity(0.12))
+                                        .cornerRadius(6)
+                                }
+                                
+                                Menu {
+                                    Button("Редактировать канал") {
+                                        editingItem = item
+                                    }
+                                    
+                                    Button("Комментарий") {
+                                        editingItem = item
+                                    }
+                                    
+                                    Button(state.isNotWorking ? "Снять пометку \"не работает\"" : "Пометить как \"не работает\"") {
+                                        stateStore.setNotWorking(!state.isNotWorking, for: satelliteId, item: item)
+                                    }
+                                    
+                                    Button("Удалить канал навсегда", role: .destructive) {
+                                        stateStore.setDeleted(true, for: satelliteId, item: item)
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                             
-                            if state.isNotWorking {
-                                Text("НЕ РАБОТАЕТ")
+                            HStack(spacing: 10) {
+                                Text("Разнос: \(format(effectiveItem.spacingMHz))")
                                     .font(.caption2)
-                                    .foregroundColor(.red)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.red.opacity(0.12))
-                                    .cornerRadius(6)
+                                    .foregroundColor(.secondary)
+                                Text("Ширина: \(formatWidth(effectiveItem.channelWidthKHz))")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Spacer()
                             }
                             
-                            Menu {
-                                Button("Редактировать канал") {
-                                    editingItem = item
-                                }
-                                
-                                Button("Комментарий") {
-                                    editingItem = item
-                                }
-                                
-                                Button(state.isNotWorking ? "Снять пометку \"не работает\"" : "Пометить как \"не работает\"") {
-                                    stateStore.setNotWorking(!state.isNotWorking, for: satelliteId, item: item)
-                                }
-                                
-                                Button("Удалить канал навсегда", role: .destructive) {
-                                    stateStore.setDeleted(true, for: satelliteId, item: item)
-                                }
-                            } label: {
-                                Image(systemName: "ellipsis.circle")
+                            if !state.comment.isEmpty {
+                                Text(state.comment)
+                                    .font(.system(size: 12, weight: .regular, design: .rounded))
                                     .foregroundColor(.secondary)
+                                    .padding(.leading, 2)
                             }
                         }
-                        
-                        HStack(spacing: 10) {
-                            Text("Разнос: \(format(effectiveItem.spacingMHz))")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text("Ширина: \(formatWidth(effectiveItem.channelWidthKHz))")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Spacer()
-                        }
-                        
-                        if !state.comment.isEmpty {
-                            Text(state.comment)
-                                .font(.system(size: 12, weight: .regular, design: .rounded))
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 2)
-                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(UITheme.surfaceBackground(for: colorScheme))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+                        )
                     }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(UITheme.surfaceBackground(for: colorScheme))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
-                    )
                 }
             }
             
@@ -295,6 +311,62 @@ struct LibraryFrequenciesSection: View {
     }
 }
 
+private struct SwipeDeleteCardRow<Content: View>: View {
+    let onDelete: () -> Void
+    @ViewBuilder let content: () -> Content
+    
+    @State private var offsetX: CGFloat = 0
+    private let actionWidth: CGFloat = 96
+    
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.red)
+                .overlay(alignment: .trailing) {
+                    Label("Удалить", systemImage: "trash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundColor(.white)
+                        .padding(.trailing, 14)
+                        .opacity(max(0, min(1, (-offsetX - 18) / (actionWidth - 18))))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            
+            content()
+                .offset(x: offsetX)
+                .gesture(
+                    DragGesture(minimumDistance: 8)
+                        .onChanged { value in
+                            offsetX = min(0, max(-actionWidth * 1.35, value.translation.width))
+                        }
+                        .onEnded { value in
+                            if value.translation.width < -actionWidth * 1.1 {
+                                withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
+                                    offsetX = -actionWidth * 1.25
+                                }
+                                onDelete()
+                            } else if value.translation.width < -actionWidth * 0.45 {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                    offsetX = -actionWidth
+                                }
+                            } else {
+                                withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                                    offsetX = 0
+                                }
+                            }
+                        }
+                )
+                .onTapGesture {
+                    if offsetX != 0 {
+                        withAnimation(.spring(response: 0.25, dampingFraction: 0.9)) {
+                            offsetX = 0
+                        }
+                    }
+                }
+        }
+        .clipped()
+    }
+}
+
 struct FrequencyChannelEditorView: View {
     let initialItem: SatelliteFrequencyItem
     let initialComment: String
@@ -332,12 +404,16 @@ struct FrequencyChannelEditorView: View {
             Form {
                 Section(header: Text("Параметры канала")) {
                     TextField("RX, MHz", text: $rxDraft)
+                        .font(.footnote)
                         .keyboardType(.decimalPad)
                     TextField("TX, MHz", text: $txDraft)
+                        .font(.footnote)
                         .keyboardType(.decimalPad)
                     TextField("Разнос, MHz", text: $spacingDraft)
+                        .font(.footnote)
                         .keyboardType(.decimalPad)
                     TextField("Ширина, кГц", text: $widthDraft)
+                        .font(.footnote)
                         .keyboardType(.numberPad)
                 }
                 

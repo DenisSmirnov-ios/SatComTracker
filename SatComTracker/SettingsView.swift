@@ -17,9 +17,11 @@ struct SettingsView: View {
     @State private var pendingFrequencyImportURL: URL?
     @State private var showingFrequencyImportModeSheet = false
     @State private var showingDeleteFrequenciesConfirmSheet = false
+    @State private var showingRestoreDefaultsConfirm = false
     @State private var activeDocumentPicker: DocumentPickerKind?
     
     @State private var settingsChanged = false
+    @State private var restoreDefaultsStatus: String?
 
     private enum DocumentPickerKind: Identifiable {
         case tle
@@ -63,7 +65,10 @@ struct SettingsView: View {
 
     var estimatedPositionsRequestsPerHour: Double {
         guard settings.refreshInterval > 0 else { return 0 }
-        return Double(settings.allActiveIDs.count) * (3600.0 / Double(settings.refreshInterval))
+        let remoteIDsCount = settings.allActiveIDs.filter {
+            BuiltInGeostationaryLibrary.satellitesByNorad[$0] == nil
+        }.count
+        return Double(remoteIDsCount) * (3600.0 / Double(settings.refreshInterval))
     }
     
     var body: some View {
@@ -119,6 +124,23 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Интервал обновления")) {
+                    Picker("Режим обновления", selection: Binding(
+                        get: { settings.updateMode },
+                        set: {
+                            settings.updateMode = $0
+                            settingsChanged = true
+                        }
+                    )) {
+                        ForEach(AppSettings.UpdateMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text(settings.updateMode.description)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
                     Picker("Интервал", selection: $settings.refreshInterval) {
                         Text("5 мин").tag(300)
                         Text("15 мин").tag(900)
@@ -128,19 +150,20 @@ struct SettingsView: View {
                         Text("4 часа").tag(14400)
                     }
                     .pickerStyle(.menu)
+                    .disabled(settings.updateMode != .automatic)
                     .onChange(of: settings.refreshInterval) { _ in
                         settingsChanged = true
                     }
 
-                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении одно обновление отправляет примерно 1 запрос positions на каждый спутник в списке, поэтому выбирайте интервал с учетом их количества.")
+                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении лимит расходуют только пользовательские спутники: одно обновление отправляет примерно 1 запрос positions на каждый такой спутник.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
-                    if estimatedPositionsRequestsPerHour > 1000 {
+                    if settings.updateMode == .automatic && estimatedPositionsRequestsPerHour > 1000 {
                         Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, это выше лимита 1000/60 мин")
                             .font(.caption)
                             .foregroundColor(.red)
-                    } else if estimatedPositionsRequestsPerHour > 800 {
+                    } else if settings.updateMode == .automatic && estimatedPositionsRequestsPerHour > 800 {
                         Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, вы близко к лимиту API")
                             .font(.caption)
                             .foregroundColor(.orange)
@@ -248,6 +271,23 @@ struct SettingsView: View {
                 }
                 
                 Section {
+                    Button("Восстановить данные как после установки", role: .destructive) {
+                        showingRestoreDefaultsConfirm = true
+                    }
+                    
+                    Text("Вернет встроенный список спутников и встроенную библиотеку частот. Все пользовательские изменения будут удалены.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    
+                    if let restoreDefaultsStatus {
+                        Text(restoreDefaultsStatus)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Section {
                     Button("Очистить все спутники", role: .destructive) {
                         showingClearAlert = true
                     }
@@ -273,6 +313,18 @@ struct SettingsView: View {
                     settings.clearAllSatellites()
                     settingsChanged = true
                 }
+            }
+            .confirmationDialog(
+                "Восстановить данные как после установки?",
+                isPresented: $showingRestoreDefaultsConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Восстановить", role: .destructive) {
+                    restoreInstalledData()
+                }
+                Button("Отмена", role: .cancel) { }
+            } message: {
+                Text("Будут удалены пользовательские спутники, импортированные частоты и правки каналов.")
             }
             .overlay {
                 if showingDeleteFrequenciesConfirmSheet {
@@ -494,6 +546,20 @@ struct SettingsView: View {
         libraryStore.clearAllData()
         SatelliteFrequencyStateStore.shared.clearAll()
         frequencyImportStatus = "Все данные частот удалены"
+    }
+
+    private func restoreInstalledData() {
+        settings.restoreInstalledDefaults()
+        libraryStore.restoreBuiltInData()
+        SatelliteFrequencyStateStore.shared.clearAll()
+
+        tleImportStatus = nil
+        frequencyImportStatus = nil
+        pendingFrequencyImportURL = nil
+        satelliteInput = ""
+
+        settingsChanged = true
+        restoreDefaultsStatus = "Восстановлено состояние как после установки"
     }
     
     private func extractNORADIDs(fromTLEText text: String) -> [Int] {

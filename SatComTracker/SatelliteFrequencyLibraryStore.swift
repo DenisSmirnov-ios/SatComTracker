@@ -106,6 +106,12 @@ final class SatelliteFrequencyLibraryStore: ObservableObject {
         mergedByNorad = [:]
         save()
     }
+
+    func restoreBuiltInData() {
+        overrideByNorad = nil
+        mergedByNorad = [:]
+        save()
+    }
     
     private func deduplicated(_ items: [SatelliteFrequencyItem]) -> [SatelliteFrequencyItem] {
         var seen = Set<String>()

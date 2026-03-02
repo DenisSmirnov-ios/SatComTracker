@@ -92,3 +92,4 @@ extension View {
         modifier(AppCardModifier(cornerRadius: cornerRadius))
     }
 }
+

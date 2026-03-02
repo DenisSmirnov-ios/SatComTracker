@@ -14,7 +14,7 @@ struct WelcomeView: View {
                 Text("Требуется настройка")
                     .font(.system(size: 24, weight: .bold, design: .rounded))
                 
-                Text("Добавьте API ключ и выберите спутники")
+                Text("Выберите спутники. API ключ нужен только для пользовательских NORAD ID")
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -75,6 +75,7 @@ struct LocationPermissionView: View {
 
 struct RefreshButton: View {
     let isLoading: Bool
+    let isEnabled: Bool
     let action: () -> Void
     
     var body: some View {
@@ -87,7 +88,8 @@ struct RefreshButton: View {
                 )
         }
         .buttonStyle(AppToolbarIconButtonStyle())
-        .disabled(isLoading)
+        .disabled(isLoading || !isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
     }
 }
 
@@ -97,6 +99,7 @@ struct MainContentView: View {
     let visibleCount: Int
     @Binding var selectedSatellite: Satellite?
     let onRefresh: () -> Void
+    let onDeleteSatellite: (Int) -> Void
     
     var body: some View {
         ZStack {
@@ -121,7 +124,8 @@ struct MainContentView: View {
                         satellites: apiService.satellites,
                         errorMessage: apiService.errorMessage,
                         selectedSatellite: $selectedSatellite,
-                        onRetry: onRefresh
+                        onRetry: onRefresh,
+                        onDeleteSatellite: onDeleteSatellite
                     )
                 }
             }
@@ -183,6 +187,7 @@ struct SatelliteList: View {
     let errorMessage: String?
     @Binding var selectedSatellite: Satellite?
     let onRetry: () -> Void
+    let onDeleteSatellite: (Int) -> Void
     
     var body: some View {
         List {
@@ -197,6 +202,13 @@ struct SatelliteList: View {
                     SatelliteRow(satellite: satellite)
                 }
                 .buttonStyle(.plain)
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        onDeleteSatellite(satellite.id)
+                    } label: {
+                        Label("Удалить", systemImage: "trash")
+                    }
+                }
                 .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
