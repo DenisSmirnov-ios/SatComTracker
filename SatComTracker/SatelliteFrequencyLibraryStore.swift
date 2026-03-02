@@ -156,8 +156,8 @@ private enum FrequencyImportParser {
     private static func parseXLSX(url: URL) throws -> ParsedResult {
         let data = try Data(contentsOf: url)
         let zip = try SimpleZipReader(data: data)
-        guard let sheetXML = zip.readTextEntry(named: "xl/worksheets/sheet1.xml") else {
-            throw ParseError.invalidStructure("sheet1.xml not found")
+        guard let sheetXML = resolvePrimaryWorksheetXML(zip: zip) else {
+            throw ParseError.invalidStructure("Worksheet XML not found")
         }
         
         let sharedStrings: [String]
@@ -178,6 +178,33 @@ private enum FrequencyImportParser {
         }
         
         return buildResult(from: Array(rows.dropFirst()), columnMap: columnMap)
+    }
+
+    private static func resolvePrimaryWorksheetXML(zip: SimpleZipReader) -> String? {
+        if let workbook = zip.readTextEntry(named: "xl/workbook.xml"),
+           let rels = zip.readTextEntry(named: "xl/_rels/workbook.xml.rels"),
+           let firstSheetRid = regexFirstMatch(
+               pattern: "<(?:[A-Za-z0-9_]+:)?sheet[^>]*?r:id=\"([^\"]+)\"[^>]*/?>",
+               in: workbook
+           ),
+           let target = regexFirstMatch(
+               pattern: "<Relationship[^>]*?Id=\"\(NSRegularExpression.escapedPattern(for: firstSheetRid))\"[^>]*?Target=\"([^\"]+)\"[^>]*/?>",
+               in: rels
+           ) {
+            let normalizedTarget = target
+                .replacingOccurrences(of: "\\", with: "/")
+                .replacingOccurrences(of: "../", with: "")
+            let fullPath = normalizedTarget.hasPrefix("xl/")
+                ? normalizedTarget
+                : "xl/\(normalizedTarget)"
+            if let xml = zip.readTextEntry(named: fullPath) {
+                return xml
+            }
+        }
+
+        if let xml = zip.readTextEntry(named: "xl/worksheets/sheet1.xml") { return xml }
+        if let xml = zip.readTextEntry(named: "xl/worksheets/sheet.xml") { return xml }
+        return nil
     }
     
     private static func parsePDF(url: URL) throws -> ParsedResult {
@@ -248,14 +275,14 @@ private enum FrequencyImportParser {
         var map = ColumnMap()
         
         for (column, value) in headerRow {
-            let normalized = value.lowercased().replacingOccurrences(of: " ", with: "")
+            let normalized = normalizeHeader(value)
             if normalized.contains("rx") || normalized.contains("прием") || normalized.contains("приём") {
                 map.rx = column
             } else if normalized.contains("tx") || normalized.contains("uplink") || normalized.contains("up") {
                 map.tx = column
             } else if normalized.contains("разнос") || normalized.contains("spacing") {
                 map.spacing = column
-            } else if normalized.contains("ширинаканала") || normalized.contains("bandwidth") {
+            } else if normalized.contains("ширинаканала") || normalized.contains("ширина") || normalized.contains("bandwidth") {
                 map.width = column
             } else if normalized.contains("спутник") || normalized.contains("norad") || normalized.contains("sat") {
                 map.satellite = column
@@ -263,6 +290,18 @@ private enum FrequencyImportParser {
         }
         
         return map
+    }
+
+    private static func normalizeHeader(_ text: String) -> String {
+        text
+            .lowercased()
+            .folding(options: [.diacriticInsensitive], locale: .current)
+            .replacingOccurrences(of: "\u{feff}", with: "")
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "№", with: "")
+            .replacingOccurrences(of: ":", with: "")
     }
     
     private static func buildResult(from rows: [[String: String]], columnMap: ColumnMap) -> ParsedResult {
@@ -332,42 +371,68 @@ private enum FrequencyImportParser {
     }
     
     private static func parseSharedStrings(_ xml: String) -> [String] {
-        let siBlocks = regexMatchesSimple(pattern: "<si[^>]*>(.*?)</si>", in: xml, dotMatchesNewlines: true)
+        let siBlocks = regexMatchesSimple(
+            pattern: "<(?:[A-Za-z0-9_]+:)?si[^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?si>",
+            in: xml,
+            dotMatchesNewlines: true
+        )
         return siBlocks.map { block in
-            let textNodes = regexMatchesSimple(pattern: "<t[^>]*>(.*?)</t>", in: block, dotMatchesNewlines: true)
+            let textNodes = regexMatchesSimple(
+                pattern: "<(?:[A-Za-z0-9_]+:)?t[^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?t>",
+                in: block,
+                dotMatchesNewlines: true
+            )
             let joined = textNodes.joined()
             return decodeXMLEntities(joined)
         }
     }
     
     private static func parseSheetRows(sheetXML: String, sharedStrings: [String]) -> [[String: String]] {
-        let rowBlocks = regexMatchesSimple(pattern: "<row[^>]*>(.*?)</row>", in: sheetXML, dotMatchesNewlines: true)
+        let rowBlocks = regexMatchesSimple(
+            pattern: "<(?:[A-Za-z0-9_]+:)?row[^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?row>",
+            in: sheetXML,
+            dotMatchesNewlines: true
+        )
         var result: [[String: String]] = []
         
         for row in rowBlocks {
             let cellBlocks = regexMatches(
-                pattern: "<c[^>]*r=\"([A-Z]+)[0-9]+\"[^>]*?(?:t=\"([^\"]+)\")?[^>]*>(.*?)</c>",
+                pattern: "<(?:[A-Za-z0-9_]+:)?c([^>]*)r=\"([A-Z]+)[0-9]+\"([^>]*)>(.*?)</(?:[A-Za-z0-9_]+:)?c>",
                 in: row,
                 dotMatchesNewlines: true,
-                captureGroups: 3
+                captureGroups: 4
             )
             
             var rowDict: [String: String] = [:]
             for capture in cellBlocks {
-                guard capture.count == 3 else { continue }
-                let column = capture[0]
-                let type = capture[1]
-                let body = capture[2]
-                
-                guard let valueNode = regexFirstMatch(pattern: "<v>(.*?)</v>", in: body, dotMatchesNewlines: true) else {
-                    continue
-                }
-                
+                guard capture.count == 4 else { continue }
+                let attrs = capture[0] + " " + capture[2]
+                let column = capture[1]
+                let body = capture[3]
+                let type = regexFirstMatch(pattern: "t=\"([^\"]+)\"", in: attrs) ?? ""
+
                 let value: String
-                if type == "s", let idx = Int(valueNode), idx >= 0, idx < sharedStrings.count {
-                    value = sharedStrings[idx]
+                if let valueNode = regexFirstMatch(
+                    pattern: "<(?:[A-Za-z0-9_]+:)?v>(.*?)</(?:[A-Za-z0-9_]+:)?v>",
+                    in: body,
+                    dotMatchesNewlines: true
+                ) {
+                    if type == "s", let idx = Int(valueNode), idx >= 0, idx < sharedStrings.count {
+                        value = sharedStrings[idx]
+                    } else {
+                        value = decodeXMLEntities(valueNode)
+                    }
+                } else if type == "inlineStr" || body.contains("<is>") || body.contains(":is>") {
+                    let textNodes = regexMatchesSimple(
+                        pattern: "<(?:[A-Za-z0-9_]+:)?t[^>]*>(.*?)</(?:[A-Za-z0-9_]+:)?t>",
+                        in: body,
+                        dotMatchesNewlines: true
+                    )
+                    let joined = decodeXMLEntities(textNodes.joined())
+                    guard !joined.isEmpty else { continue }
+                    value = joined
                 } else {
-                    value = decodeXMLEntities(valueNode)
+                    continue
                 }
                 
                 rowDict[column] = value

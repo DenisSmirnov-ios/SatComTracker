@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import UniformTypeIdentifiers
+import UIKit
 
 struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
@@ -11,15 +12,44 @@ struct SettingsView: View {
     @State private var satelliteInput = ""
     @State private var showingClearAlert = false
     @State private var showingMapView = false
-    @State private var showingTLEImporter = false
     @State private var tleImportStatus: String?
-    @State private var showingFrequencyImporter = false
     @State private var frequencyImportStatus: String?
     @State private var pendingFrequencyImportURL: URL?
     @State private var showingFrequencyImportModeSheet = false
     @State private var showingDeleteFrequenciesConfirmSheet = false
+    @State private var activeDocumentPicker: DocumentPickerKind?
     
     @State private var settingsChanged = false
+
+    private enum DocumentPickerKind: Identifiable {
+        case tle
+        case frequency
+
+        var id: String {
+            switch self {
+            case .tle: return "tle"
+            case .frequency: return "frequency"
+            }
+        }
+
+        var contentTypes: [UTType] {
+            switch self {
+            case .tle:
+                return [.tle, .plainText, .utf8PlainText, .text]
+            case .frequency:
+                return [.pdf, .xlsx]
+            }
+        }
+    }
+
+    private func contentTypes(for kind: DocumentPickerKind) -> [UTType] {
+        switch kind {
+        case .tle:
+            return [.tle, .plainText, .utf8PlainText, .text]
+        case .frequency:
+            return [.pdf, .xlsx]
+        }
+    }
         
     var sortedSatelliteIDs: [Int] {
         settings.allActiveIDs.sorted()
@@ -29,6 +59,11 @@ struct SettingsView: View {
         let existing = Set(settings.allActiveIDs)
         return SatelliteCatalogLibrary.search(satelliteInput)
             .filter { !existing.contains($0.noradID) }
+    }
+
+    var estimatedPositionsRequestsPerHour: Double {
+        guard settings.refreshInterval > 0 else { return 0 }
+        return Double(settings.allActiveIDs.count) * (3600.0 / Double(settings.refreshInterval))
     }
     
     var body: some View {
@@ -41,6 +76,10 @@ struct SettingsView: View {
                         .onChange(of: settings.apiKey) { _ in
                             settingsChanged = true
                         }
+
+                    Text("Подсказка: получите ключ на сайте N2YO в разделе API и вставьте его сюда. Без API ключа приложение не сможет обновлять данные по спутникам.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
 
                 Section(header: Text("Оформление")) {
@@ -92,9 +131,17 @@ struct SettingsView: View {
                     .onChange(of: settings.refreshInterval) { _ in
                         settingsChanged = true
                     }
+
+                    Text("Подсказка: N2YO ограничивает запросы (positions: до 1000 за 60 минут на API ключ). В этом приложении одно обновление отправляет примерно 1 запрос positions на каждый спутник в списке, поэтому выбирайте интервал с учетом их количества.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     
-                    if settings.refreshInterval < 3600 {
-                        Text("⚠️ Может превысить лимит API")
+                    if estimatedPositionsRequestsPerHour > 1000 {
+                        Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, это выше лимита 1000/60 мин")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    } else if estimatedPositionsRequestsPerHour > 800 {
+                        Text("⚠️ Оценка: ~\(Int(estimatedPositionsRequestsPerHour)) запросов positions/час, вы близко к лимиту API")
                             .font(.caption)
                             .foregroundColor(.orange)
                     }
@@ -113,7 +160,7 @@ struct SettingsView: View {
                 
                 Section(header: Text("Спутники (NORAD ID)")) {
                     HStack {
-                        TextField("NORAD ID или название", text: $satelliteInput)
+                        TextField("NORAD ID или название спутника", text: $satelliteInput)
                             .textInputAutocapitalization(.characters)
                         Button("Добавить") {
                             addSatelliteFromInput()
@@ -122,10 +169,10 @@ struct SettingsView: View {
                     }
                     
                     Button("Импортировать TLE файл") {
-                        showingTLEImporter = true
+                        activeDocumentPicker = .tle
                     }
                     
-                    Text("Подсказка: введите NORAD ID (например, 25544) или часть названия (например, GALAXY), затем выберите спутник из списка.")
+                    Text("Подсказка: введите NORAD ID (например, 28117) или часть названия (например, UFO 11), затем выберите спутник из списка.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     
@@ -181,8 +228,12 @@ struct SettingsView: View {
                 }
                 
                 Section(header: Text("Библиотека частот")) {
+                    Text("Встроенная библиотека содержит частоты транспондеров основных спутников Satcom. При необходимости вы можете дополнить или обновить эти данные вручную либо импортом из файла.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+
                     Button("Импортировать данные библиотеки (PDF/XLSX)") {
-                        showingFrequencyImporter = true
+                        activeDocumentPicker = .frequency
                     }
                     
                     Button("Удалить все данные частот", role: .destructive) {
@@ -200,6 +251,11 @@ struct SettingsView: View {
                     Button("Очистить все спутники", role: .destructive) {
                         showingClearAlert = true
                     }
+                    
+                    Text("Это действие удалит все добавленные спутники из списка отслеживания. Спутники из TLE файлов также будут удалены. При необходимости вы сможете добавить их заново.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
                 }
             }
             .background(AppBackground())
@@ -276,19 +332,27 @@ struct SettingsView: View {
             .sheet(isPresented: $showingMapView) {
                 MapLocationView(settings: settings, locationManager: locationManager)
             }
-            .fileImporter(
-                isPresented: $showingTLEImporter,
-                allowedContentTypes: [.text, .plainText],
-                allowsMultipleSelection: false
-            ) { result in
-                handleTLEImport(result)
-            }
-            .fileImporter(
-                isPresented: $showingFrequencyImporter,
-                allowedContentTypes: [.pdf, .xlsx],
-                allowsMultipleSelection: false
-            ) { result in
-                handleFrequencyImport(result)
+            .sheet(item: $activeDocumentPicker) { pickerKind in
+                SystemDocumentPicker(
+                    contentTypes: contentTypes(for: pickerKind),
+                    allowsMultipleSelection: false,
+                    onPick: { urls in
+                        switch pickerKind {
+                        case .tle:
+                            handleTLEImport(.success(urls))
+                        case .frequency:
+                            handleFrequencyImport(.success(urls))
+                        }
+                    },
+                    onCancel: {
+                        switch pickerKind {
+                        case .tle:
+                            tleImportStatus = "Импорт отменен"
+                        case .frequency:
+                            frequencyImportStatus = "Импорт отменен"
+                        }
+                    }
+                )
             }
             .onDisappear {
                 if settingsChanged {
@@ -351,7 +415,7 @@ struct SettingsView: View {
         }
         
         do {
-            let text = try String(contentsOf: url, encoding: .utf8)
+            let text = try readTLEText(from: url)
             let ids = extractNORADIDs(fromTLEText: text)
             guard !ids.isEmpty else {
                 tleImportStatus = "В файле не найдено корректных TLE записей"
@@ -363,6 +427,30 @@ struct SettingsView: View {
         } catch {
             tleImportStatus = "Не удалось прочитать файл: \(error.localizedDescription)"
         }
+    }
+
+    private func readTLEText(from url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        let encodings: [String.Encoding] = [
+            .utf8,
+            .ascii,
+            .windowsCP1251,
+            .utf16,
+            .utf16LittleEndian,
+            .utf16BigEndian
+        ]
+
+        for encoding in encodings {
+            if let text = String(data: data, encoding: encoding), !text.isEmpty {
+                return text
+            }
+        }
+
+        throw NSError(
+            domain: "TLEImport",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Неподдерживаемая кодировка файла"]
+        )
     }
     
     private func handleFrequencyImport(_ result: Result<[URL], Error>) {
@@ -664,9 +752,54 @@ struct SettingsView: View {
     }
 }
 
+private struct SystemDocumentPicker: UIViewControllerRepresentable {
+    let contentTypes: [UTType]
+    let allowsMultipleSelection: Bool
+    let onPick: ([URL]) -> Void
+    let onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick, onCancel: onCancel)
+    }
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let controller = UIDocumentPickerViewController(
+            forOpeningContentTypes: contentTypes,
+            asCopy: true
+        )
+        controller.delegate = context.coordinator
+        controller.allowsMultipleSelection = allowsMultipleSelection
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) { }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onPick: ([URL]) -> Void
+        private let onCancel: () -> Void
+
+        init(onPick: @escaping ([URL]) -> Void, onCancel: @escaping () -> Void) {
+            self.onPick = onPick
+            self.onCancel = onCancel
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onCancel()
+        }
+    }
+}
+
 private extension UTType {
     static var xlsx: UTType {
         UTType(filenameExtension: "xlsx") ?? .data
+    }
+
+    static var tle: UTType {
+        UTType(filenameExtension: "tle") ?? .plainText
     }
 }
 
