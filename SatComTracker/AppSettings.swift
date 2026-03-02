@@ -14,6 +14,7 @@ class AppSettings: ObservableObject {
     @AppStorage("manualLatitude") var manualLatitude: String = "55.7558"
     @AppStorage("manualLongitude") var manualLongitude: String = "37.6173"
     @AppStorage("lastSelectedAddress") var lastSelectedAddress: String = ""
+    @AppStorage("themeMode") private var themeModeRaw: String = ThemeMode.system.rawValue
     
     enum LocationSource: String, CaseIterable {
         case gps = "GPS"
@@ -33,6 +34,20 @@ class AppSettings: ObservableObject {
             case .gps: return "Автоматическое определение"
             case .manual: return "Ручной ввод координат"
             case .map: return "Выбор на карте"
+            }
+        }
+    }
+
+    enum ThemeMode: String, CaseIterable {
+        case system = "system"
+        case light = "light"
+        case dark = "dark"
+
+        var title: String {
+            switch self {
+            case .system: return "Как в телефоне"
+            case .light: return "Светлая"
+            case .dark: return "Темная"
             }
         }
     }
@@ -80,6 +95,22 @@ class AppSettings: ObservableObject {
         case 7200: return "2 ч"
         case 14400: return "4 ч"
         default: return "\(refreshInterval / 3600) ч"
+        }
+    }
+
+    var themeMode: ThemeMode {
+        get { ThemeMode(rawValue: themeModeRaw) ?? .system }
+        set {
+            themeModeRaw = newValue.rawValue
+            objectWillChange.send()
+        }
+    }
+
+    var preferredColorScheme: ColorScheme? {
+        switch themeMode {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
         }
     }
     

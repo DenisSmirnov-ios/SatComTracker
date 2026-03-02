@@ -43,6 +43,7 @@ struct ContentView: View {
                     Button(action: { showSettings = true }) {
                         Image(systemName: "gear")
                     }
+                    .buttonStyle(AppToolbarIconButtonStyle())
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -50,6 +51,7 @@ struct ContentView: View {
                 }
             }
         }
+        .preferredColorScheme(settings.preferredColorScheme)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings, locationManager: locationManager)
         }

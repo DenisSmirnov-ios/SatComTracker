@@ -3,6 +3,7 @@ import SwiftUI
 struct ActiveCompassView: View {
     let satelliteAzimuth: Double
     @ObservedObject var compassManager: CompassManager
+    @Environment(\.colorScheme) private var colorScheme
     
     var relativeAzimuth: Double {
         let diff = satelliteAzimuth - compassManager.heading
@@ -12,28 +13,31 @@ struct ActiveCompassView: View {
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.gray.opacity(0.3), lineWidth: 2)
+                .stroke(Color.blue.opacity(0.25), lineWidth: 2)
+                .background(
+                    Circle().fill(UITheme.surfaceBackground(for: colorScheme).opacity(0.85))
+                )
                 .frame(width: 200, height: 200)
             
             Text("N")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.red)
                 .offset(y: -90)
                 .rotationEffect(.degrees(-compassManager.heading))
             
             Text("S")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.blue)
                 .offset(y: 90)
                 .rotationEffect(.degrees(-compassManager.heading))
             
             Text("W")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .offset(x: -90)
                 .rotationEffect(.degrees(-compassManager.heading))
             
             Text("E")
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 18, weight: .bold, design: .rounded))
                 .offset(x: 90)
                 .rotationEffect(.degrees(-compassManager.heading))
             
@@ -101,6 +105,7 @@ struct SatelliteDetailView: View {
             }
             .padding()
         }
+        .background(AppBackground())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -117,6 +122,7 @@ struct LibraryFrequenciesSection: View {
     let channels: [SatelliteFrequencyItem]
     @ObservedObject private var stateStore = SatelliteFrequencyStateStore.shared
     private let libraryStore = SatelliteFrequencyLibraryStore.shared
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var editingItem: SatelliteFrequencyItem?
     @State private var showOnlyWorking = false
@@ -135,18 +141,18 @@ struct LibraryFrequenciesSection: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Label("RX/TX Частоты", systemImage: "dot.radiowaves.left.and.right")
-                    .font(.headline)
+                    .font(.system(size: 19, weight: .semibold, design: .rounded))
                 Spacer()
                 Button {
                     showingAddEditor = true
                 } label: {
                     Label("Добавить", systemImage: "plus.circle")
-                        .font(.caption)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
                 }
                 .buttonStyle(.borderless)
                 
                 Text("\(visibleChannels.count)")
-                    .font(.caption)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(.secondary)
             }
             
@@ -165,10 +171,10 @@ struct LibraryFrequenciesSection: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 10) {
                             Text("RX \(format(effectiveItem.rxMHz))")
-                                .font(.caption)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .foregroundColor(.green)
                             Text("TX \(format(effectiveItem.txMHz))")
-                                .font(.caption)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
                                 .foregroundColor(.orange)
                             Spacer()
                             
@@ -216,19 +222,24 @@ struct LibraryFrequenciesSection: View {
                         
                         if !state.comment.isEmpty {
                             Text(state.comment)
-                                .font(.caption2)
+                                .font(.system(size: 12, weight: .regular, design: .rounded))
                                 .foregroundColor(.secondary)
                                 .padding(.leading, 2)
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(UITheme.surfaceBackground(for: colorScheme))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+                    )
                 }
             }
             
         }
-        .padding()
-        .background(Color.gray.opacity(0.08))
-        .cornerRadius(12)
+        .appCard(cornerRadius: 18)
         .sheet(item: $editingItem) { item in
             FrequencyChannelEditorView(
                 initialItem: stateStore.effectiveItem(for: satelliteId, item: item),
@@ -339,6 +350,7 @@ struct FrequencyChannelEditorView: View {
                     Toggle("Пометить как \"не работает\"", isOn: $notWorking)
                 }
             }
+            .background(AppBackground())
             .navigationTitle("Частота")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -400,8 +412,7 @@ struct HeaderView: View {
                     .foregroundColor(satellite.isVisible ? .green : .red)
                 
                 Text(satellite.name)
-                    .font(.title2)
-                    .fontWeight(.bold)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
@@ -414,6 +425,7 @@ struct HeaderView: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(12)
         }
+        .appCard(cornerRadius: 18)
         .padding(.top, 8)
     }
 }
@@ -433,6 +445,7 @@ struct UpdateTimeView: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(12)
         }
+        .padding(.horizontal, 2)
     }
 }
 
@@ -453,10 +466,8 @@ struct BelowHorizonWarning: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
-        .padding()
         .frame(maxWidth: .infinity)
-        .background(Color.red.opacity(0.1))
-        .cornerRadius(16)
+        .appCard(cornerRadius: 16)
     }
 }
 
@@ -514,10 +525,7 @@ struct CompassSection: View {
             .background(Color.blue.opacity(0.05))
             .cornerRadius(12)
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(20)
-        .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
+        .appCard(cornerRadius: 20)
     }
 }
 

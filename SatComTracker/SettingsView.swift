@@ -34,7 +34,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("🔑 API Ключ")) {
+                Section(header: Text("API Ключ")) {
                     TextField("Введите API ключ", text: $settings.apiKey)
                         .textContentType(.password)
                         .autocapitalization(.none)
@@ -42,8 +42,23 @@ struct SettingsView: View {
                             settingsChanged = true
                         }
                 }
+
+                Section(header: Text("Оформление")) {
+                    Picker("Тема", selection: Binding(
+                        get: { settings.themeMode },
+                        set: {
+                            settings.themeMode = $0
+                            settingsChanged = true
+                        }
+                    )) {
+                        ForEach(AppSettings.ThemeMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
                 
-                Section(header: Text("📍 Местоположение")) {
+                Section(header: Text("Местоположение")) {
                     Picker("Источник", selection: $settings.locationSource) {
                         ForEach(AppSettings.LocationSource.allCases, id: \.self) { source in
                             Label(source.rawValue, systemImage: source.icon).tag(source)
@@ -64,7 +79,7 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("🔄 Интервал обновления")) {
+                Section(header: Text("Интервал обновления")) {
                     Picker("Интервал", selection: $settings.refreshInterval) {
                         Text("5 мин").tag(300)
                         Text("15 мин").tag(900)
@@ -96,7 +111,7 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("🛰️ Спутники (NORAD ID)")) {
+                Section(header: Text("Спутники (NORAD ID)")) {
                     HStack {
                         TextField("NORAD ID или название", text: $satelliteInput)
                             .textInputAutocapitalization(.characters)
@@ -165,7 +180,7 @@ struct SettingsView: View {
                     }
                 }
                 
-                Section(header: Text("📚 Библиотека частот")) {
+                Section(header: Text("Библиотека частот")) {
                     Button("Импортировать данные библиотеки (PDF/XLSX)") {
                         showingFrequencyImporter = true
                     }
@@ -187,6 +202,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            .background(AppBackground())
             .navigationTitle("Настройки")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -482,11 +498,28 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            
-            if let error = locationManager.locationError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundColor(.red)
+
+            if let gpsStatus = gpsStatusMessage {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: gpsStatus.isError ? "location.slash.fill" : "checkmark.circle.fill")
+                        .foregroundColor(gpsStatus.isError ? .red : .green)
+                        .padding(.top, 2)
+                    Text(gpsStatus.message)
+                        .font(.caption2)
+                        .foregroundColor(gpsStatus.isError ? .red : .secondary)
+                        .multilineTextAlignment(.leading)
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(gpsStatus.isError ? Color.red.opacity(0.12) : Color.green.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(gpsStatus.isError ? Color.red.opacity(0.28) : Color.green.opacity(0.24), lineWidth: 1)
+                )
             }
             
             Text(settings.locationSource.description)
@@ -495,6 +528,29 @@ struct SettingsView: View {
                 .padding(.top, 4)
         }
         .padding(.vertical, 4)
+    }
+
+    private var gpsStatusMessage: (message: String, isError: Bool)? {
+        if locationManager.currentLocation != nil {
+            return ("GPS работает стабильно. Координаты успешно получены.", false)
+        }
+
+        if let error = locationManager.locationError, !error.isEmpty {
+            return ("Ошибка GPS: \(error). Проверьте сигнал и попробуйте на открытом месте.", true)
+        }
+
+        if !locationManager.hasPermission {
+            switch locationManager.authorizationStatus {
+            case .denied, .restricted:
+                return ("GPS отключен для приложения. Включите доступ к геопозиции в настройках телефона.", true)
+            case .notDetermined:
+                return ("Разрешение GPS еще не выдано. Нажмите «Разрешить доступ».", true)
+            default:
+                return ("GPS недоступен. Проверьте настройки геолокации.", true)
+            }
+        }
+
+        return ("Ожидание сигнала GPS. Если координаты не появятся, проверьте интернет и геолокацию.", true)
     }
     
     @ViewBuilder
@@ -617,6 +673,7 @@ private extension UTType {
 private struct FrequencyDataDeleteConfirmSheet: View {
     let onConfirm: () -> Void
     let onCancel: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     @State private var offsetX: CGFloat = 0
     @State private var offsetY: CGFloat = 0
     private let knobSize: CGFloat = 52
@@ -624,7 +681,7 @@ private struct FrequencyDataDeleteConfirmSheet: View {
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color.red.opacity(0.08), Color.orange.opacity(0.08), Color.clear],
+                colors: [Color.red.opacity(0.10), Color.orange.opacity(0.08), Color.clear],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -660,7 +717,7 @@ private struct FrequencyDataDeleteConfirmSheet: View {
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(Color.white.opacity(0.55))
+                .background(UITheme.surfaceBackground(for: colorScheme).opacity(0.85))
                 .cornerRadius(12)
                 
                 GeometryReader { geometry in
@@ -710,7 +767,7 @@ private struct FrequencyDataDeleteConfirmSheet: View {
             .padding()
             .background(
                 RoundedRectangle(cornerRadius: 18)
-                    .fill(Color(.systemBackground))
+                    .fill(UITheme.surfaceBackground(for: colorScheme))
             )
             .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
             .offset(y: offsetY)
@@ -737,17 +794,19 @@ private struct FrequencyImportModeSheet: View {
     let onMerge: () -> Void
     let onReplace: () -> Void
     let onCancel: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         VStack(spacing: 16) {
             HStack {
                 Spacer()
                 Button("Отмена") { onCancel() }
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
             }
             
             Image(systemName: "tray.and.arrow.down.fill")
                 .font(.system(size: 30, weight: .semibold))
-                .foregroundColor(.blue)
+                .foregroundColor(UITheme.accent)
             
             Text("Как обновить библиотеку?")
                 .font(.title3)
@@ -770,7 +829,7 @@ private struct FrequencyImportModeSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(Color.blue.opacity(0.10))
+                .background(UITheme.accent.opacity(0.10))
                 .cornerRadius(12)
             }
             .buttonStyle(.plain)
@@ -796,7 +855,7 @@ private struct FrequencyImportModeSheet: View {
         .padding()
         .background(
             RoundedRectangle(cornerRadius: 18)
-                .fill(Color(.systemBackground))
+                .fill(UITheme.surfaceBackground(for: colorScheme))
         )
         .shadow(color: .black.opacity(0.2), radius: 20, y: 10)
     }

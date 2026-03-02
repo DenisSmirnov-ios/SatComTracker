@@ -15,121 +15,152 @@ struct MapLocationView: View {
     @State private var searchText = ""
     @State private var selectedAddress: String?
     @State private var mapType: MKMapType = .standard
+    @State private var gpsStatusMessage: String?
+    @State private var gpsStatusIsError = false
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.gray)
-                    TextField("Поиск города или места", text: $searchText)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.words)
-                    
-                    if geocoderManager.isSearching {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    }
-                }
-                .padding()
-                
-                if !geocoderManager.searchResults.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(geocoderManager.searchResults) { result in
-                                Button(action: {
-                                    selectLocation(result.coordinate, title: result.title)
-                                }) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(result.title)
-                                            .font(.caption)
-                                            .fontWeight(.medium)
-                                            .lineLimit(1)
-                                        Text(result.subtitle)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.blue.opacity(0.1))
-                                    .cornerRadius(8)
-                                }
-                                .buttonStyle(.plain)
-                            }
+            ZStack {
+                MapView(region: $region, selectedCoordinate: $selectedCoordinate, mapType: mapType)
+                    .ignoresSafeArea()
+
+                VStack(spacing: 10) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("Поиск города или места", text: $searchText)
+                            .autocapitalization(.words)
+
+                        if geocoderManager.isSearching {
+                            ProgressView()
+                                .scaleEffect(0.8)
                         }
-                        .padding(.horizontal)
                     }
-                    .padding(.bottom, 8)
-                }
-                
-                ZStack {
-                    MapView(region: $region, selectedCoordinate: $selectedCoordinate, mapType: mapType)
-                        .edgesIgnoringSafeArea(.bottom)
-                    
-                    VStack {
-                        HStack {
-                            Menu {
-                                Button("Схема") { mapType = .standard }
-                                Button("Спутник") { mapType = .satellite }
-                                Button("Гибрид") { mapType = .hybrid }
-                            } label: {
-                                Image(systemName: "map")
-                                    .padding(10)
-                                    .background(Color.white)
-                                    .clipShape(Circle())
-                                    .shadow(radius: 3)
-                            }
-                            .padding(.leading, 12)
-                            .padding(.top, 12)
-                            
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(UITheme.surfaceBackground(for: colorScheme).opacity(0.98))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+                    )
+
+                    if let gpsStatusMessage {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: gpsStatusIsError ? "location.slash.fill" : "location.fill")
+                                .foregroundColor(gpsStatusIsError ? .red : .green)
+                                .padding(.top, 2)
+
+                            Text(gpsStatusMessage)
+                                .font(.caption)
+                                .foregroundColor(gpsStatusIsError ? .red : .secondary)
+                                .multilineTextAlignment(.leading)
                             Spacer()
                         }
-                        
-                        Spacer()
-                        
-                        if let coordinate = selectedCoordinate {
-                            VStack(spacing: 8) {
-                                if let address = selectedAddress {
-                                    Text(address)
-                                        .font(.caption)
-                                        .multilineTextAlignment(.center)
-                                }
-                                
-                                Text(String(format: "Ш: %.4f°, Д: %.4f°", coordinate.latitude, coordinate.longitude))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                
-                                HStack(spacing: 16) {
-                                    Button("Выбрать") {
-                                        settings.manualLatitude = String(format: "%.6f", coordinate.latitude)
-                                        settings.manualLongitude = String(format: "%.6f", coordinate.longitude)
-                                        settings.lastSelectedAddress = selectedAddress ?? String(
-                                            format: "Ш: %.4f°, Д: %.4f°",
-                                            coordinate.latitude,
-                                            coordinate.longitude
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(gpsStatusIsError ? Color.red.opacity(0.12) : Color.green.opacity(0.12))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(gpsStatusIsError ? Color.red.opacity(0.3) : Color.green.opacity(0.25), lineWidth: 1)
+                        )
+                    }
+
+                    if !geocoderManager.searchResults.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(geocoderManager.searchResults) { result in
+                                    Button(action: {
+                                        selectLocation(result.coordinate, title: result.title)
+                                    }) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(result.title)
+                                                .font(.caption)
+                                                .fontWeight(.medium)
+                                                .lineLimit(1)
+                                            Text(result.subtitle)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(UITheme.surfaceBackground(for: colorScheme))
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
                                         )
-                                        settings.locationSource = .map
-                                        dismiss()
                                     }
-                                    .buttonStyle(.borderedProminent)
-                                    .controlSize(.small)
-                                    
-                                    Button("Отмена") {
-                                        selectedCoordinate = nil
-                                        selectedAddress = nil
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
+                                    .buttonStyle(.plain)
                                 }
                             }
-                            .padding()
-                            .background(Color(.systemBackground).opacity(0.95))
-                            .cornerRadius(12)
-                            .shadow(radius: 5)
-                            .padding()
                         }
                     }
+
+                    HStack {
+                        Menu {
+                            Button("Схема") { mapType = .standard }
+                            Button("Спутник") { mapType = .satellite }
+                            Button("Гибрид") { mapType = .hybrid }
+                        } label: {
+                            Image(systemName: "map")
+                                .foregroundColor(UITheme.accent)
+                                .padding(11)
+                                .background(UITheme.surfaceBackground(for: colorScheme))
+                                .clipShape(Circle())
+                                .overlay(Circle().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1))
+                                .shadow(color: UITheme.shadow(for: colorScheme), radius: 8, y: 3)
+                        }
+                        Spacer()
+                    }
+
+                    Spacer()
+
+                    if let coordinate = selectedCoordinate {
+                        VStack(spacing: 8) {
+                            if let address = selectedAddress {
+                                Text(address)
+                                    .font(.caption)
+                                    .multilineTextAlignment(.center)
+                            }
+
+                            Text(String(format: "Ш: %.4f°, Д: %.4f°", coordinate.latitude, coordinate.longitude))
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+
+                            HStack(spacing: 16) {
+                                Button("Выбрать") {
+                                    settings.manualLatitude = String(format: "%.6f", coordinate.latitude)
+                                    settings.manualLongitude = String(format: "%.6f", coordinate.longitude)
+                                    settings.lastSelectedAddress = selectedAddress ?? String(
+                                        format: "Ш: %.4f°, Д: %.4f°",
+                                        coordinate.latitude,
+                                        coordinate.longitude
+                                    )
+                                    settings.locationSource = .map
+                                    dismiss()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+
+                                Button("Отмена") {
+                                    selectedCoordinate = nil
+                                    selectedAddress = nil
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+                        .appCard(cornerRadius: 14)
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 12)
             }
             .navigationTitle("Выбор на карте")
             .navigationBarTitleDisplayMode(.inline)
@@ -142,10 +173,7 @@ struct MapLocationView: View {
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Моё местоположение") {
-                        if let location = locationManager.currentLocation {
-                            region.center = location.coordinate
-                            region.span = MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
-                        }
+                        focusOnUserLocation()
                     }
                 }
             }
@@ -166,6 +194,16 @@ struct MapLocationView: View {
                    let lon = Double(settings.manualLongitude) {
                     region.center = CLLocationCoordinate2D(latitude: lat, longitude: lon)
                 }
+                refreshGPSStatus()
+            }
+            .onChange(of: locationManager.authorizationStatus) { _ in
+                refreshGPSStatus()
+            }
+            .onChange(of: locationManager.currentLocation) { _ in
+                refreshGPSStatus()
+            }
+            .onChange(of: locationManager.locationError) { _ in
+                refreshGPSStatus()
             }
         }
     }
@@ -176,6 +214,69 @@ struct MapLocationView: View {
         region.span = MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
         searchText = title
         geocoderManager.searchResults = []
+    }
+
+    private func focusOnUserLocation() {
+        if let location = locationManager.currentLocation {
+            region.center = location.coordinate
+            region.span = MKCoordinateSpan(latitudeDelta: 0.1, longitudeDelta: 0.1)
+            gpsStatusMessage = "GPS активен. Позиция пользователя определена."
+            gpsStatusIsError = false
+            return
+        }
+
+        if !locationManager.hasPermission {
+            locationManager.requestLocation()
+            switch locationManager.authorizationStatus {
+            case .denied, .restricted:
+                gpsStatusMessage = "Нет доступа к GPS. Разрешите доступ к геопозиции в настройках телефона."
+            case .notDetermined:
+                gpsStatusMessage = "Запрошен доступ к GPS. Подтвердите разрешение и попробуйте снова."
+            default:
+                gpsStatusMessage = "GPS недоступен. Проверьте разрешение на геопозицию."
+            }
+            gpsStatusIsError = true
+            return
+        }
+
+        locationManager.startUpdating()
+        if let error = locationManager.locationError, !error.isEmpty {
+            gpsStatusMessage = "GPS не работает: \(error). Проверьте сигнал и попробуйте на открытом месте."
+            gpsStatusIsError = true
+        } else {
+            gpsStatusMessage = "Ожидание сигнала GPS. Если позиция не появится, проверьте интернет и геолокацию."
+            gpsStatusIsError = true
+        }
+    }
+
+    private func refreshGPSStatus() {
+        if let location = locationManager.currentLocation {
+            gpsStatusMessage = String(
+                format: "GPS активен: Ш %.4f°, Д %.4f°",
+                location.coordinate.latitude,
+                location.coordinate.longitude
+            )
+            gpsStatusIsError = false
+            return
+        }
+
+        if let error = locationManager.locationError, !error.isEmpty {
+            gpsStatusMessage = "Ошибка GPS: \(error). Проверьте сигнал и разрешения геолокации."
+            gpsStatusIsError = true
+            return
+        }
+
+        switch locationManager.authorizationStatus {
+        case .denied, .restricted:
+            gpsStatusMessage = "Доступ к GPS отключен. Включите геолокацию для приложения в настройках телефона."
+            gpsStatusIsError = true
+        case .notDetermined:
+            gpsStatusMessage = nil
+            gpsStatusIsError = false
+        default:
+            gpsStatusMessage = nil
+            gpsStatusIsError = false
+        }
     }
 }
 

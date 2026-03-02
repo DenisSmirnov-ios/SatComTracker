@@ -4,26 +4,30 @@ struct WelcomeView: View {
     @Binding var showSettings: Bool
     
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "antenna.radiowaves.left.and.right")
-                .font(.system(size: 60))
-                .foregroundColor(.blue)
-            
-            Text("Требуется настройка")
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            Text("Добавьте API ключ и выберите спутники")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            Button("Перейти в настройки") {
-                showSettings = true
+        ZStack {
+            AppBackground()
+            VStack(spacing: 20) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 56, weight: .semibold, design: .rounded))
+                    .foregroundColor(UITheme.accent)
+                
+                Text("Требуется настройка")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                
+                Text("Добавьте API ключ и выберите спутники")
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                Button("Перейти в настройки") {
+                    showSettings = true
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .appCard(cornerRadius: 20)
+            .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -34,31 +38,36 @@ struct LocationPermissionView: View {
     @Binding var showSettings: Bool
     
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "location.slash")
-                .font(.system(size: 60))
-                .foregroundColor(.gray)
-            
-            Text("Нужен доступ к геопозиции")
-                .font(.headline)
-            
-            Text("Для использования GPS необходимо разрешение")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            HStack(spacing: 16) {
-                Button("Разрешить GPS") {
-                    locationManager.requestLocation()
-                }
-                .buttonStyle(.borderedProminent)
+        ZStack {
+            AppBackground()
+            VStack(spacing: 20) {
+                Image(systemName: "location.slash")
+                    .font(.system(size: 52, weight: .semibold, design: .rounded))
+                    .foregroundColor(.gray)
                 
-                Button("Выбрать источник") {
-                    showSettings = true
+                Text("Нужен доступ к геопозиции")
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                
+                Text("Для использования GPS необходимо разрешение")
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                
+                HStack(spacing: 16) {
+                    Button("Разрешить GPS") {
+                        locationManager.requestLocation()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    
+                    Button("Выбрать источник") {
+                        showSettings = true
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
+            .appCard(cornerRadius: 20)
+            .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -77,6 +86,7 @@ struct RefreshButton: View {
                     value: isLoading
                 )
         }
+        .buttonStyle(AppToolbarIconButtonStyle())
         .disabled(isLoading)
     }
 }
@@ -89,28 +99,31 @@ struct MainContentView: View {
     let onRefresh: () -> Void
     
     var body: some View {
-        VStack(spacing: 0) {
-            if let lastUpdate = apiService.lastUpdateTime {
-                InfoBar(lastUpdate: lastUpdate, refreshInterval: settings.refreshIntervalText)
-            }
-            
-            if !apiService.satellites.isEmpty {
-                VisibilityIndicator(
-                    visible: visibleCount,
-                    hidden: apiService.satellites.count - visibleCount
-                )
-            }
-            
-            if apiService.isLoading && apiService.satellites.isEmpty {
-                ProgressView("Загрузка данных...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                SatelliteList(
-                    satellites: apiService.satellites,
-                    errorMessage: apiService.errorMessage,
-                    selectedSatellite: $selectedSatellite,
-                    onRetry: onRefresh
-                )
+        ZStack {
+            AppBackground()
+            VStack(spacing: 10) {
+                if let lastUpdate = apiService.lastUpdateTime {
+                    InfoBar(lastUpdate: lastUpdate, refreshInterval: settings.refreshIntervalText)
+                }
+                
+                if !apiService.satellites.isEmpty {
+                    VisibilityIndicator(
+                        visible: visibleCount,
+                        hidden: apiService.satellites.count - visibleCount
+                    )
+                }
+                
+                if apiService.isLoading && apiService.satellites.isEmpty {
+                    ProgressView("Загрузка данных...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    SatelliteList(
+                        satellites: apiService.satellites,
+                        errorMessage: apiService.errorMessage,
+                        selectedSatellite: $selectedSatellite,
+                        onRetry: onRefresh
+                    )
+                }
             }
         }
     }
@@ -119,6 +132,7 @@ struct MainContentView: View {
 struct InfoBar: View {
     let lastUpdate: Date
     let refreshInterval: String
+    @Environment(\.colorScheme) private var colorScheme
     
     private let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -132,16 +146,20 @@ struct InfoBar: View {
             Spacer()
             Text(refreshInterval)
         }
-        .font(.caption)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(UITheme.surfaceBackground(for: colorScheme))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1))
         .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color.gray.opacity(0.1))
     }
 }
 
 struct VisibilityIndicator: View {
     let visible: Int
     let hidden: Int
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         HStack(spacing: 16) {
@@ -150,10 +168,13 @@ struct VisibilityIndicator: View {
             Label("\(hidden)", systemImage: "eye.slash.fill")
                 .foregroundColor(.red)
         }
-        .font(.caption)
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(UITheme.surfaceBackground(for: colorScheme))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1))
         .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color.gray.opacity(0.1))
     }
 }
 
@@ -167,6 +188,8 @@ struct SatelliteList: View {
         List {
             if let error = errorMessage {
                 ErrorRow(message: error, onRetry: onRetry)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 14, bottom: 6, trailing: 14))
+                    .listRowSeparator(.hidden)
             }
             
             ForEach(satellites) { satellite in
@@ -174,9 +197,13 @@ struct SatelliteList: View {
                     SatelliteRow(satellite: satellite)
                 }
                 .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 6, leading: 14, bottom: 6, trailing: 14))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
             }
         }
         .listStyle(.plain)
+        .background(Color.clear)
         .refreshable {
             onRetry()
         }
@@ -202,13 +229,14 @@ struct ErrorRow: View {
                 .buttonStyle(.bordered)
         }
         .frame(maxWidth: .infinity)
-        .padding()
+        .appCard(cornerRadius: 14)
         .listRowBackground(Color.clear)
     }
 }
 
 struct SatelliteRow: View {
     let satellite: Satellite
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         HStack {
@@ -219,7 +247,7 @@ struct SatelliteRow: View {
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(satellite.name)
-                    .font(.headline)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
                     .foregroundColor(satellite.isVisible ? .primary : .red)
                     .lineLimit(1)
                 
@@ -244,8 +272,7 @@ struct SatelliteRow: View {
             
             VStack(alignment: .trailing, spacing: 2) {
                 Text(String(format: "%.1f°", satellite.elevation))
-                    .font(.system(.body, design: .monospaced))
-                    .fontWeight(.bold)
+                    .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundColor(satellite.isVisible ? .green : .red)
                 
                 if satellite.isError {
@@ -255,7 +282,14 @@ struct SatelliteRow: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(UITheme.surfaceBackground(for: colorScheme))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1)
+        )
         .contentShape(Rectangle())
     }
 }

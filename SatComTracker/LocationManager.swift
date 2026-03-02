@@ -16,6 +16,7 @@ class LocationManager: NSObject, ObservableObject {
         manager.delegate = self
         manager.desiredAccuracy = kCLLocationAccuracyBest
         manager.distanceFilter = 1000
+        authorizationStatus = manager.authorizationStatus
     }
     
     func requestLocation() {
