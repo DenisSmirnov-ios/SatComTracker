@@ -14,11 +14,6 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var refreshTask: Task<Void, Never>?
     @State private var shouldRefreshOnAppear = true
-
-    private enum RefreshTrigger {
-        case automatic
-        case manual
-    }
     
     var visibleCount: Int {
         apiService.satellites.filter { $0.isVisible }.count
@@ -37,7 +32,7 @@ struct ContentView: View {
                         settings: settings,
                         visibleCount: visibleCount,
                         selectedSatellite: $selectedSatellite,
-                        onRefresh: { refreshData(trigger: .manual) },
+                        onRefresh: refreshData,
                         onDeleteSatellite: deleteSatellite
                     )
                 }
@@ -56,7 +51,7 @@ struct ContentView: View {
                     RefreshButton(
                         isLoading: apiService.isLoading,
                         isEnabled: settings.updateMode == .automatic,
-                        action: { refreshData(trigger: .manual) }
+                        action: refreshData
                     )
                 }
             }
@@ -84,26 +79,26 @@ struct ContentView: View {
         }
         .onChange(of: settings.isConfigured) { _ in
             if settings.isConfigured {
-                refreshData(trigger: .automatic)
+                refreshData()
             }
         }
         .onChange(of: locationManager.currentLocation) { _ in
             if settings.locationSource == .gps && settings.shouldRefreshCache() {
-                refreshData(trigger: .automatic)
+                refreshData()
             }
         }
         .onChange(of: settings.manualLatitude) { _ in
             if (settings.locationSource == .manual || settings.locationSource == .map) && settings.shouldRefreshCache() {
-                refreshData(trigger: .automatic)
+                refreshData()
             }
         }
         .onChange(of: settings.manualLongitude) { _ in
             if (settings.locationSource == .manual || settings.locationSource == .map) && settings.shouldRefreshCache() {
-                refreshData(trigger: .automatic)
+                refreshData()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .settingsChanged)) { _ in
-            refreshData(trigger: .automatic)
+            refreshData()
         }
     }
     
@@ -151,7 +146,7 @@ struct ContentView: View {
                     altitude: coords.altitude,
                     refreshInterval: settings.refreshInterval,
                     forceRefresh: true,
-                    allowRemoteUpdates: settings.updateMode == .automatic,
+                    allowRemoteUpdates: true,
                     onCacheUpdated: { settings.updateCacheTime() }
                 )
             } else if settings.lastCacheUpdate != Date.distantPast {
@@ -163,14 +158,14 @@ struct ContentView: View {
                     altitude: coords.altitude,
                     refreshInterval: settings.refreshInterval,
                     forceRefresh: false,
-                    allowRemoteUpdates: settings.updateMode == .automatic,
+                    allowRemoteUpdates: true,
                     onCacheUpdated: nil
                 )
             }
         }
     }
     
-    private func refreshData(trigger: RefreshTrigger = .manual) {
+    private func refreshData() {
         refreshTask?.cancel()
         refreshTask = Task { @MainActor in
             // Keep UI populated even before location is available or remote fetch is allowed.
@@ -211,7 +206,7 @@ struct ContentView: View {
             selectedSatellite = nil
         }
         settings.removeSatellite(noradID)
-        refreshData(trigger: .automatic)
+        refreshData()
     }
 }
 

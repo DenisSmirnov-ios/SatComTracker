@@ -92,6 +92,7 @@ struct ActiveCompassView: View {
                     .offset(y: 84)
             }
         }
+        .animation(.linear(duration: 0.16), value: compassManager.heading)
     }
 }
 
@@ -591,6 +592,7 @@ struct FrequencyChannelEditorView: View {
 
 struct HeaderView: View {
     let satellite: Satellite
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         VStack(spacing: 4) {
@@ -610,7 +612,7 @@ struct HeaderView: View {
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
+                .background(UITheme.surfaceBackground(for: colorScheme))
                 .cornerRadius(12)
         }
         .appCard(cornerRadius: 18)
@@ -621,6 +623,7 @@ struct HeaderView: View {
 struct UpdateTimeView: View {
     let timestamp: Date
     let timeFormatter: DateFormatter
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         HStack {
@@ -630,7 +633,7 @@ struct UpdateTimeView: View {
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
+                .background(UITheme.surfaceBackground(for: colorScheme))
                 .cornerRadius(12)
         }
         .padding(.horizontal, 2)

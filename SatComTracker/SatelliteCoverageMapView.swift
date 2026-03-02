@@ -14,6 +14,13 @@ struct SatelliteCoverageMapView: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
+    private static let statusTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        formatter.dateStyle = .none
+        return formatter
+    }()
+
     init(satellite: Satellite, settings: AppSettings) {
         self.settings = settings
         _trackedSatellite = State(initialValue: satellite)
@@ -107,13 +114,13 @@ struct SatelliteCoverageMapView: View {
             guard settings.updateMode == .automatic, settings.refreshInterval > 0 else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(settings.refreshInterval) * 1_000_000_000)
-                await refreshPosition(force: true, source: .timer)
+                await refreshPosition(force: true)
             }
         }
     }
 
     @MainActor
-    private func refreshPosition(force: Bool, source: RefreshSource) async {
+    private func refreshPosition(force: Bool) async {
         guard let observer = observerCoordinate else {
             refreshStatus = "Неизвестны координаты наблюдателя"
             return
@@ -153,20 +160,13 @@ struct SatelliteCoverageMapView: View {
     }
 
     private func timeString(from date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
+        Self.statusTimeFormatter.string(from: date)
     }
 
     private func formatGeoLongitude(_ value: Double?) -> String {
         guard let value else { return "N/A" }
         let direction = value >= 0 ? "E" : "W"
         return String(format: "%.1f°%@", abs(value), direction)
-    }
-
-    private enum RefreshSource {
-        case timer
     }
 
     private var coverageInfoPanel: some View {

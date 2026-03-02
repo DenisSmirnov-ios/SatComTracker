@@ -20,6 +20,7 @@ struct SettingsView: View {
     @State private var isSyncingGitHubFrequencies = false
     @State private var pendingTXTImport: PendingTXTImport?
     @State private var showingGitHubSyncConfirmSheet = false
+    @Environment(\.colorScheme) private var colorScheme
     
     @State private var settingsChanged = false
     @State private var githubSyncStatus: String?
@@ -55,13 +56,6 @@ struct SettingsView: View {
         }
     }
 
-    private func contentTypes(for kind: DocumentPickerKind) -> [UTType] {
-        switch kind {
-        case .channelsTXT:
-            return [.plainText, .utf8PlainText, .text]
-        }
-    }
-        
     var sortedSatelliteIDs: [Int] {
         settings.allActiveIDs.sorted()
     }
@@ -373,7 +367,7 @@ struct SettingsView: View {
             }
             .sheet(item: $activeDocumentPicker) { pickerKind in
                 SystemDocumentPicker(
-                    contentTypes: contentTypes(for: pickerKind),
+                    contentTypes: pickerKind.contentTypes,
                     allowsMultipleSelection: false,
                     onPick: { urls in
                         handleTXTImport(.success(urls))
@@ -848,7 +842,7 @@ struct SettingsView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
+                .background(UITheme.surfaceBackground(for: colorScheme))
                 .cornerRadius(6)
             } else {
                 HStack {
@@ -986,7 +980,7 @@ struct SettingsView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.gray.opacity(0.1))
+                .background(UITheme.surfaceBackground(for: colorScheme))
                 .cornerRadius(6)
                 
                 if !settings.lastSelectedAddress.isEmpty {
