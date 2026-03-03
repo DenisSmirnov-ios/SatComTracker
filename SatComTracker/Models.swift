@@ -49,11 +49,28 @@ struct CachedData: Codable {
 struct SatellitePositionsResponse: Codable {
     let info: PositionInfo
     let positions: [PositionData]
+
+    private enum CodingKeys: String, CodingKey {
+        case info
+        case positions
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        info = try container.decodeIfPresent(PositionInfo.self, forKey: .info) ?? PositionInfo()
+        positions = try container.decodeIfPresent([PositionData].self, forKey: .positions) ?? []
+    }
     
     struct PositionInfo: Codable {
         let satname: String
         let satid: Int
         let transactionscount: Int
+
+        init(satname: String = "Unknown", satid: Int = 0, transactionscount: Int = 0) {
+            self.satname = satname
+            self.satid = satid
+            self.transactionscount = transactionscount
+        }
     }
     
     struct PositionData: Codable {
@@ -62,10 +79,7 @@ struct SatellitePositionsResponse: Codable {
         let sataltitude: Double
         let azimuth: Double
         let elevation: Double
-        let ra: Double
-        let dec: Double
         let timestamp: TimeInterval
-        let eclipsed: Bool
     }
 }
 

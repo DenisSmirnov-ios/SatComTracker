@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ActiveCompassView: View {
     let satelliteAzimuth: Double
+    let diameter: CGFloat
     @ObservedObject var compassManager: CompassManager
     @Environment(\.colorScheme) private var colorScheme
     
@@ -22,6 +23,8 @@ struct ActiveCompassView: View {
     }
     
     var body: some View {
+        let scale = max(0.55, diameter / 332.0)
+
         ZStack {
             ZStack {
                 Circle()
@@ -92,6 +95,8 @@ struct ActiveCompassView: View {
                     .offset(y: 84)
             }
         }
+        .scaleEffect(scale)
+        .frame(width: diameter, height: diameter)
         .animation(.linear(duration: 0.16), value: compassManager.heading)
     }
 }
@@ -177,6 +182,10 @@ struct SatelliteDetailView: View {
     @ObservedObject private var libraryStore = SatelliteFrequencyLibraryStore.shared
     @State private var showingCoverageMap = false
     @State private var showingFrequencyLibrary = false
+
+    private var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
     
     private var libraryChannels: [SatelliteFrequencyItem] {
         libraryStore.channels(for: satellite)
@@ -190,41 +199,85 @@ struct SatelliteDetailView: View {
     }()
     
     var body: some View {
-        VStack(spacing: 14) {
-            HeaderView(satellite: satellite)
-            UpdateTimeView(timestamp: satellite.timestamp, timeFormatter: timeFormatter)
+        GeometryReader { geometry in
+            let isLandscape = geometry.size.width > geometry.size.height
+            let compactHeight = geometry.size.height < 760
+            let horizontalPadding = min(max(geometry.size.width * 0.04, 12), 34)
+            let buttonFontSize: CGFloat = compactHeight ? 13 : 14
 
-            HStack(spacing: 10) {
-                Button {
-                    showingCoverageMap = true
-                } label: {
-                    Label("Карта покрытия", systemImage: "map.fill")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .frame(maxWidth: .infinity)
+            Group {
+                if isPad && isLandscape {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: compactHeight ? 10 : 14) {
+                            detailControls(
+                                compactHeight: compactHeight,
+                                buttonFontSize: buttonFontSize,
+                                isLandscape: true
+                            )
+
+                            if satellite.isVisible {
+                                CompassSection(satellite: satellite, compassManager: compassManager)
+                                    .frame(maxHeight: .infinity, alignment: .top)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .top)
+
+                        ScrollView {
+                            LibraryFrequenciesSection(satelliteId: satellite.id, channels: libraryChannels)
+                                .padding(.vertical, 2)
+                        }
+                        .frame(width: min(max(geometry.size.width * 0.38, 340), 520), alignment: .top)
+                    }
+                } else if isPad {
+                    VStack(spacing: compactHeight ? 10 : 14) {
+                        detailControls(
+                            compactHeight: compactHeight,
+                            buttonFontSize: buttonFontSize,
+                            isLandscape: false
+                        )
+
+                        if satellite.isVisible {
+                            CompassSection(satellite: satellite, compassManager: compassManager)
+                                .frame(height: min(max(geometry.size.height * 0.50, 360), 560))
+                        }
+
+                        ScrollView {
+                            LibraryFrequenciesSection(satelliteId: satellite.id, channels: libraryChannels)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
+                } else if isLandscape && satellite.isVisible {
+                    let controlsWidth = min(max(geometry.size.width * 0.43, 340), 620)
+                    HStack(alignment: .top, spacing: 12) {
+                        detailControls(
+                            compactHeight: compactHeight,
+                            buttonFontSize: buttonFontSize,
+                            isLandscape: true
+                        )
+                            .frame(width: controlsWidth, alignment: .top)
+
+                        CompassSection(satellite: satellite, compassManager: compassManager)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    }
+                } else {
+                    VStack(spacing: compactHeight ? 10 : 14) {
+                        detailControls(
+                            compactHeight: compactHeight,
+                            buttonFontSize: buttonFontSize,
+                            isLandscape: false
+                        )
+
+                        if satellite.isVisible {
+                            CompassSection(satellite: satellite, compassManager: compassManager)
+                                .frame(maxHeight: .infinity, alignment: .top)
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-
-                Button {
-                    showingFrequencyLibrary = true
-                } label: {
-                    Label("RX/TX", systemImage: "dot.radiowaves.left.and.right")
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
             }
-
-            if !satellite.isVisible {
-                BelowHorizonWarning(elevation: satellite.elevation)
-            }
-
-            if satellite.isVisible {
-                CompassSection(satellite: satellite, compassManager: compassManager)
-                    .frame(maxHeight: .infinity, alignment: .top)
-            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, compactHeight ? 10 : 14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(AppBackground())
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
@@ -239,6 +292,47 @@ struct SatelliteDetailView: View {
         }
         .sheet(isPresented: $showingFrequencyLibrary) {
             FrequencyLibraryWindow(satellite: satellite)
+        }
+    }
+
+    @ViewBuilder
+    private func detailControls(compactHeight: Bool, buttonFontSize: CGFloat, isLandscape: Bool) -> some View {
+        VStack(spacing: compactHeight ? 10 : 14) {
+            HeaderView(satellite: satellite)
+            UpdateTimeView(timestamp: satellite.timestamp, timeFormatter: timeFormatter)
+
+            HStack(spacing: compactHeight ? 8 : 10) {
+                Button {
+                    showingCoverageMap = true
+                } label: {
+                    Label("Карта покрытия", systemImage: "map.fill")
+                        .font(
+                            .system(
+                                size: isLandscape ? buttonFontSize + 1 : buttonFontSize,
+                                weight: .semibold,
+                                design: .rounded
+                            )
+                        )
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                if !isPad {
+                    Button {
+                        showingFrequencyLibrary = true
+                    } label: {
+                        Label("RX/TX", systemImage: "dot.radiowaves.left.and.right")
+                            .font(.system(size: buttonFontSize, weight: .semibold, design: .rounded))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .frame(width: isLandscape ? 108 : nil)
+                }
+            }
+
+            if !satellite.isVisible {
+                BelowHorizonWarning(elevation: satellite.elevation)
+            }
         }
     }
 }
@@ -267,6 +361,7 @@ private struct FrequencyLibraryWindow: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
     }
 }
 
@@ -537,6 +632,7 @@ struct FrequencyChannelEditorView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
         .onChange(of: rxDraft) { _ in
             recalculateSpacing()
         }
@@ -684,57 +780,78 @@ struct CompassSection: View {
     }
     
     var body: some View {
-        VStack(spacing: 20) {
-            HStack {
-                Label("Наведение на спутник", systemImage: "scope")
-                    .font(.headline)
-                Spacer()
-                if compassManager.isCalibrating {
-                    Label("Калибровка", systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+        GeometryReader { geometry in
+            let height = geometry.size.height
+            let width = geometry.size.width
+            let ultraCompact = height < 430
+            let compact = height < 560 || width < 360
+            let verticalReserve: CGFloat = ultraCompact ? 176 : (compact ? 228 : 286)
+            let diameterByHeight = max(120, height - verticalReserve)
+            let diameterByWidth = max(120, width - (compact ? 24 : 36))
+            let compassDiameter = min(diameterByHeight, diameterByWidth, compact ? 280 : 620)
+            let metricFont: CGFloat = ultraCompact ? 22 : (compact ? 26 : min(42, compassDiameter * 0.115))
+            let stackSpacing: CGFloat = ultraCompact ? 8 : (compact ? 12 : 18)
+            let titleFont: Font = ultraCompact ? .subheadline : .headline
+
+            VStack(spacing: stackSpacing) {
+                HStack {
+                    Label("Наведение на спутник", systemImage: "scope")
+                        .font(titleFont)
+                    Spacer()
+                    if compassManager.isCalibrating {
+                        Label("Калибровка", systemImage: "exclamationmark.triangle.fill")
+                            .font(ultraCompact ? .caption2 : .caption)
+                            .foregroundColor(.orange)
+                    }
                 }
-            }
-            
-            ActiveCompassView(
-                satelliteAzimuth: satellite.azimuth,
-                compassManager: compassManager
-            )
-            .frame(height: 360)
-            
-            HStack(spacing: 30) {
-                VStack(spacing: 4) {
-                    Text("АЗИМУТ")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.0f°", satellite.azimuth))
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundColor(.blue)
+
+                ActiveCompassView(
+                    satelliteAzimuth: satellite.azimuth,
+                    diameter: compassDiameter,
+                    compassManager: compassManager
+                )
+                .frame(maxWidth: .infinity)
+
+                HStack(spacing: ultraCompact ? 14 : (compact ? 22 : 30)) {
+                    VStack(spacing: 4) {
+                        Text("АЗИМУТ")
+                            .font(ultraCompact ? .caption2 : .caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.0f°", satellite.azimuth))
+                            .font(.system(size: metricFont, weight: .bold, design: .rounded))
+                            .foregroundColor(.blue)
+                    }
+
+                    Divider()
+                        .frame(height: ultraCompact ? 28 : (compact ? 34 : 40))
+
+                    VStack(spacing: 4) {
+                        Text("ЭЛЕВАЦИЯ")
+                            .font(ultraCompact ? .caption2 : .caption)
+                            .foregroundColor(.secondary)
+                        Text(String(format: "%.0f°", satellite.elevation))
+                            .font(.system(size: metricFont, weight: .bold, design: .rounded))
+                            .foregroundColor(.green)
+                    }
                 }
-                
-                Divider()
-                    .frame(height: 40)
-                
-                VStack(spacing: 4) {
-                    Text("ЭЛЕВАЦИЯ")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(String(format: "%.0f°", satellite.elevation))
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundColor(.green)
+                .padding(.vertical, ultraCompact ? 0 : (compact ? 2 : 8))
+
+                VStack(alignment: .leading, spacing: ultraCompact ? 6 : (compact ? 8 : 10)) {
+                    if ultraCompact {
+                        InstructionRow(number: 1, text: turnInstructionText, compact: true)
+                        InstructionRow(number: 2, text: String(format: "Элевация %.0f°", satellite.elevation), compact: true)
+                    } else {
+                        InstructionRow(number: 1, text: "Встаньте лицом на север")
+                        InstructionRow(number: 2, text: turnInstructionText)
+                        InstructionRow(number: 3, text: String(format: "Поднимите взгляд на %.0f°", satellite.elevation))
+                    }
                 }
+                .padding(ultraCompact ? 10 : (compact ? 12 : 14))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.blue.opacity(0.05))
+                .cornerRadius(12)
             }
-            .padding(.vertical, 8)
-            
-            VStack(alignment: .leading, spacing: 10) {
-                InstructionRow(number: 1, text: "Встаньте лицом на север")
-                InstructionRow(number: 2, text: turnInstructionText)
-                InstructionRow(number: 3, text: String(format: "Поднимите взгляд на %.0f°", satellite.elevation))
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.blue.opacity(0.05))
-            .cornerRadius(12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .appCard(cornerRadius: 20)
     }
@@ -743,18 +860,20 @@ struct CompassSection: View {
 struct InstructionRow: View {
     let number: Int
     let text: String
+    var compact: Bool = false
     
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: compact ? 8 : 12) {
             Text("\(number)")
-                .font(.caption)
+                .font(compact ? .caption2 : .caption)
                 .fontWeight(.bold)
                 .foregroundColor(.white)
-                .frame(width: 20, height: 20)
+                .frame(width: compact ? 16 : 20, height: compact ? 16 : 20)
                 .background(Circle().fill(Color.blue))
             
             Text(text)
-                .font(.subheadline)
+                .font(compact ? .caption : .subheadline)
+                .lineLimit(compact ? 1 : 2)
             
             Spacer()
         }

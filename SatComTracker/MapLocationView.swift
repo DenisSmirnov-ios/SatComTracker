@@ -212,6 +212,7 @@ struct MapLocationView: View {
                 refreshGPSStatus()
             }
         }
+        .navigationViewStyle(.stack)
     }
     
     private func selectLocation(_ coordinate: CLLocationCoordinate2D, title: String) {

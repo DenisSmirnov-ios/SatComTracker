@@ -14,6 +14,11 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var refreshTask: Task<Void, Never>?
     @State private var shouldRefreshOnAppear = true
+    @State private var isUsingFallbackCoordinates = false
+
+    private var isPad: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad
+    }
     
     var visibleCount: Int {
         apiService.satellites.filter { $0.isVisible }.count
@@ -31,6 +36,7 @@ struct ContentView: View {
                         apiService: apiService,
                         settings: settings,
                         visibleCount: visibleCount,
+                        isUsingFallbackCoordinates: isUsingFallbackCoordinates,
                         selectedSatellite: $selectedSatellite,
                         onRefresh: refreshData,
                         onDeleteSatellite: deleteSatellite
@@ -56,14 +62,16 @@ struct ContentView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
         .preferredColorScheme(settings.preferredColorScheme)
         .sheet(isPresented: $showSettings) {
             SettingsView(settings: settings, locationManager: locationManager)
         }
-        .sheet(item: $selectedSatellite) { satellite in
-            NavigationView {
-                SatelliteDetailView(satellite: satellite, compassManager: compassManager, settings: settings)
-            }
+        .sheet(item: isPad ? .constant(nil) : $selectedSatellite) { satellite in
+            satelliteDetailContainer(for: satellite)
+        }
+        .fullScreenCover(item: isPad ? $selectedSatellite : .constant(nil)) { satellite in
+            satelliteDetailContainer(for: satellite)
         }
         .onAppear {
             startServices()
@@ -195,8 +203,17 @@ struct ContentView: View {
     private func getCoordinates() async -> (latitude: Double, longitude: Double, altitude: Double)? {
         switch settings.locationSource {
         case .gps:
-            return locationManager.getCurrentCoordinates()
+            if let liveGPS = locationManager.getCurrentCoordinates() {
+                isUsingFallbackCoordinates = false
+                return liveGPS
+            }
+            // Simulator (or weak GPS signal) fallback to saved coordinates
+            // so satellite data can still be loaded.
+            let fallback = settings.getCurrentCoordinates()
+            isUsingFallbackCoordinates = fallback != nil
+            return fallback
         case .manual, .map:
+            isUsingFallbackCoordinates = false
             return settings.getCurrentCoordinates()
         }
     }
@@ -207,6 +224,14 @@ struct ContentView: View {
         }
         settings.removeSatellite(noradID)
         refreshData()
+    }
+
+    @ViewBuilder
+    private func satelliteDetailContainer(for satellite: Satellite) -> some View {
+        NavigationView {
+            SatelliteDetailView(satellite: satellite, compassManager: compassManager, settings: settings)
+        }
+        .navigationViewStyle(.stack)
     }
 }
 

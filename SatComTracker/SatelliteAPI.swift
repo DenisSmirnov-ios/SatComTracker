@@ -48,6 +48,7 @@ class SatelliteAPI: ObservableObject {
         
         let batchSize = APIConfig.maxConcurrentRequests
         var allResults: [Int: Satellite] = [:]
+        let sanitizedApiKey = sanitizeApiKey(apiKey)
         
         if !noradIDs.isEmpty {
             if !allowRemoteUpdates {
@@ -59,7 +60,7 @@ class SatelliteAPI: ObservableObject {
                     }
                 }
             } else
-            if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if sanitizedApiKey.isEmpty {
                 for id in noradIDs {
                     allResults[id] = createErrorSatellite(id: id, message: "Добавьте API-ключ для обновления пользовательских спутников")
                 }
@@ -69,7 +70,7 @@ class SatelliteAPI: ObservableObject {
                     let chunkResults = await withTaskGroup(of: Satellite?.self) { group in
                         for noradID in chunk {
                             group.addTask {
-                                await self.fetchSingleSatellite(noradID: noradID, apiKey: apiKey,
+                                await self.fetchSingleSatellite(noradID: noradID, apiKey: sanitizedApiKey,
                                                                latitude: latitude, longitude: longitude, altitude: altitude)
                             }
                         }
@@ -108,10 +109,23 @@ class SatelliteAPI: ObservableObject {
         
         let failedCount = sortedSatellites.filter(\.isError).count
         if failedCount > 0 {
+            let failureMessages = sortedSatellites
+                .filter(\.isError)
+                .compactMap(\.errorMessage)
+            let topFailureReason = prioritizedFailureReason(from: failureMessages)
+
             if failedCount == sortedSatellites.count {
-                self.errorMessage = "Не удалось загрузить данные по спутникам. Проверьте API-ключ и сеть."
+                if let topFailureReason {
+                    self.errorMessage = "Не удалось загрузить данные по спутникам: \(topFailureReason)."
+                } else {
+                    self.errorMessage = "Не удалось загрузить данные по спутникам. Проверьте API-ключ и сеть."
+                }
             } else {
-                self.errorMessage = "Часть данных не загружена (\(failedCount) из \(sortedSatellites.count))."
+                if let topFailureReason {
+                    self.errorMessage = "Часть данных не загружена (\(failedCount) из \(sortedSatellites.count)): \(topFailureReason)."
+                } else {
+                    self.errorMessage = "Часть данных не загружена (\(failedCount) из \(sortedSatellites.count))."
+                }
             }
         }
         
@@ -126,11 +140,15 @@ class SatelliteAPI: ObservableObject {
     
     private func fetchSingleSatellite(noradID: Int, apiKey: String,
                                       latitude: Double, longitude: Double, altitude: Double) async -> Satellite? {
-        
-        let urlString = "\(APIConfig.baseURL)/positions/\(noradID)/\(latitude)/\(longitude)/\(altitude)/1?apiKey=\(apiKey)"
-        
-        guard let url = URL(string: urlString) else {
-            return createErrorSatellite(id: noradID, message: "Invalid URL")
+
+        guard let url = buildPositionsURL(
+            noradID: noradID,
+            latitude: latitude,
+            longitude: longitude,
+            altitude: altitude,
+            apiKey: apiKey
+        ) else {
+            return createErrorSatellite(id: noradID, message: "Некорректный URL запроса")
         }
         
         for attempt in 0..<APIConfig.retryCount {
@@ -143,9 +161,21 @@ class SatelliteAPI: ObservableObject {
                 
                 switch httpResponse.statusCode {
                 case 200:
-                    let result = try decoder.decode(SatellitePositionsResponse.self, from: data)
+                    if let apiError = extractAPIErrorMessage(from: data) {
+                        return createErrorSatellite(id: noradID, message: apiError)
+                    }
+
+                    let result: SatellitePositionsResponse
+                    do {
+                        result = try decoder.decode(SatellitePositionsResponse.self, from: data)
+                    } catch let decodingError as DecodingError {
+                        if let apiError = extractAPIErrorMessage(from: data) {
+                            return createErrorSatellite(id: noradID, message: apiError)
+                        }
+                        return createErrorSatellite(id: noradID, message: readableDecodingErrorMessage(decodingError))
+                    }
                     guard let pos = result.positions.first else {
-                        return createErrorSatellite(id: noradID, message: "No position data")
+                        return createErrorSatellite(id: noradID, message: "Позиция спутника не получена (пустой ответ API)")
                     }
                     
                     return Satellite(
@@ -177,6 +207,8 @@ class SatelliteAPI: ObservableObject {
                         continue
                     }
                     return createErrorSatellite(id: noradID, message: "Rate limit exceeded")
+                case 401, 403:
+                    return createErrorSatellite(id: noradID, message: "Неверный API-ключ (HTTP \(httpResponse.statusCode))")
                     
                 default:
                     return createErrorSatellite(id: noradID, message: "HTTP \(httpResponse.statusCode)")
@@ -184,7 +216,7 @@ class SatelliteAPI: ObservableObject {
                 
             } catch {
                 if attempt == APIConfig.retryCount - 1 {
-                    return createErrorSatellite(id: noradID, message: error.localizedDescription)
+                    return createErrorSatellite(id: noradID, message: readableNetworkErrorMessage(error))
                 }
                 let delay = UInt64(pow(2.0, Double(attempt))) * 1_000_000_000
                 try? await Task.sleep(nanoseconds: delay)
@@ -250,5 +282,100 @@ class SatelliteAPI: ObservableObject {
     private func hasGeoPrefix(_ name: String) -> Bool {
         let pattern = #"^\d{1,3}([.,]\d+)?°[EW]\s+"#
         return name.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private func sanitizeApiKey(_ apiKey: String) -> String {
+        apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func buildPositionsURL(
+        noradID: Int,
+        latitude: Double,
+        longitude: Double,
+        altitude: Double,
+        apiKey: String
+    ) -> URL? {
+        guard var components = URLComponents(string: APIConfig.baseURL) else {
+            return nil
+        }
+        components.path += "/positions/\(noradID)/\(latitude)/\(longitude)/\(altitude)/1"
+        components.queryItems = [
+            URLQueryItem(name: "apiKey", value: apiKey)
+        ]
+        return components.url
+    }
+
+    private func prioritizedFailureReason(from messages: [String]) -> String? {
+        let normalized = messages
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !normalized.isEmpty else { return nil }
+
+        if let auth = normalized.first(where: { $0.contains("HTTP 401") || $0.contains("HTTP 403") || $0.localizedCaseInsensitiveContains("API-ключ") }) {
+            return auth
+        }
+        if let rate = normalized.first(where: { $0.contains("429") || $0.localizedCaseInsensitiveContains("rate limit") }) {
+            return rate
+        }
+        if let network = normalized.first(where: { $0.localizedCaseInsensitiveContains("интернет") || $0.localizedCaseInsensitiveContains("соединение") }) {
+            return network
+        }
+
+        return normalized.first
+    }
+
+    private func readableNetworkErrorMessage(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet:
+                return "Нет подключения к интернету"
+            case .timedOut:
+                return "Таймаут запроса"
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "Не удается подключиться к серверу API"
+            case .networkConnectionLost:
+                return "Сетевое соединение прервано"
+            default:
+                return "Сетевая ошибка (\(urlError.code.rawValue))"
+            }
+        }
+        return error.localizedDescription
+    }
+
+    private func readableDecodingErrorMessage(_ error: DecodingError) -> String {
+        switch error {
+        case .keyNotFound(let key, _):
+            return "Некорректный ответ API: отсутствует поле '\(key.stringValue)'"
+        case .typeMismatch(_, _), .valueNotFound(_, _), .dataCorrupted(_):
+            return "Некорректный формат ответа API"
+        @unknown default:
+            return "Ошибка разбора ответа API"
+        }
+    }
+
+    private func extractAPIErrorMessage(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+              let dict = object as? [String: Any] else {
+            return nil
+        }
+
+        let candidateKeys = ["error", "message", "msg", "detail", "description"]
+        for key in candidateKeys {
+            if let value = dict[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    return trimmed
+                }
+            }
+        }
+
+        if let errors = dict["errors"] as? [String], let first = errors.first {
+            let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+
+        return nil
     }
 }

@@ -110,6 +110,7 @@ struct SatelliteCoverageMapView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
         }
+        .navigationViewStyle(.stack)
         .task(id: autoRefreshTaskID) {
             guard settings.updateMode == .automatic, settings.refreshInterval > 0 else { return }
             while !Task.isCancelled {

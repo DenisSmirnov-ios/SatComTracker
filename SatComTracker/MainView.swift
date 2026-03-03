@@ -97,39 +97,95 @@ struct MainContentView: View {
     @ObservedObject var apiService: SatelliteAPI
     @ObservedObject var settings: AppSettings
     let visibleCount: Int
+    let isUsingFallbackCoordinates: Bool
     @Binding var selectedSatellite: Satellite?
     let onRefresh: () -> Void
     let onDeleteSatellite: (Int) -> Void
-    
+
     var body: some View {
         ZStack {
             AppBackground()
-            VStack(spacing: 10) {
-                if let lastUpdate = apiService.lastUpdateTime {
-                    InfoBar(lastUpdate: lastUpdate, refreshInterval: settings.refreshIntervalText)
+            GeometryReader { geometry in
+                let isLandscape = geometry.size.width > geometry.size.height
+                let sidePadding = min(max(geometry.size.width * 0.03, 10), 22)
+
+                Group {
+                    if isLandscape {
+                        HStack(alignment: .top, spacing: 12) {
+                            statusPanel
+                                .frame(width: min(max(geometry.size.width * 0.30, 250), 360), alignment: .top)
+
+                            listPanel
+                        }
+                    } else {
+                        VStack(spacing: 10) {
+                            statusPanel
+                            listPanel
+                        }
+                    }
                 }
-                
-                if !apiService.satellites.isEmpty {
-                    VisibilityIndicator(
-                        visible: visibleCount,
-                        hidden: apiService.satellites.count - visibleCount
-                    )
-                }
-                
-                if apiService.isLoading && apiService.satellites.isEmpty {
-                    ProgressView("Загрузка данных...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    SatelliteList(
-                        satellites: apiService.satellites,
-                        errorMessage: apiService.errorMessage,
-                        selectedSatellite: $selectedSatellite,
-                        onRetry: onRefresh,
-                        onDeleteSatellite: onDeleteSatellite
-                    )
-                }
+                .padding(.horizontal, sidePadding)
+                .padding(.vertical, 8)
             }
         }
+    }
+
+    @ViewBuilder
+    private var statusPanel: some View {
+        VStack(spacing: 10) {
+            if let lastUpdate = apiService.lastUpdateTime {
+                InfoBar(lastUpdate: lastUpdate, refreshInterval: settings.refreshIntervalText)
+            }
+
+            if settings.locationSource == .gps && isUsingFallbackCoordinates {
+                FallbackLocationInfoBar()
+            }
+
+            if !apiService.satellites.isEmpty {
+                VisibilityIndicator(
+                    visible: visibleCount,
+                    hidden: apiService.satellites.count - visibleCount
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var listPanel: some View {
+        if apiService.isLoading && apiService.satellites.isEmpty {
+            ProgressView("Загрузка данных...")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            SatelliteList(
+                satellites: apiService.satellites,
+                errorMessage: apiService.errorMessage,
+                selectedSatellite: $selectedSatellite,
+                onRetry: onRefresh,
+                onDeleteSatellite: onDeleteSatellite
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct FallbackLocationInfoBar: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            Text("GPS недоступен — используются сохраненные координаты")
+                .lineLimit(2)
+            Spacer()
+        }
+        .font(.system(size: 12, weight: .semibold, design: .rounded))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(UITheme.surfaceBackground(for: colorScheme))
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(UITheme.cardBorder(for: colorScheme), lineWidth: 1))
+        .padding(.horizontal)
     }
 }
 

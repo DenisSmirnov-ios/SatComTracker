@@ -390,6 +390,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .navigationViewStyle(.stack)
     }
     
     private func removeSatelliteID(_ id: Int) {
