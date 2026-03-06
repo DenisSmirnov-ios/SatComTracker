@@ -22,5 +22,5 @@ jobs:
           xcodebuild \
             -project SatComTracker.xcodeproj \
             -scheme SatComTracker \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination 'generic/platform=iOS Simulator' \
             build
