@@ -87,18 +87,20 @@
 
 ## Скриншоты
 
-<p align="center">
-  <img src="docs/screenshots/IMG_3687.png" alt="Скриншот 1" width="220">
-  <img src="docs/screenshots/IMG_3688.png" alt="Скриншот 2" width="220">
-  <img src="docs/screenshots/IMG_3689.png" alt="Скриншот 3" width="220">
-  <img src="docs/screenshots/IMG_3690.png" alt="Скриншот 4" width="220">
-</p>
-<p align="center">
-  <img src="docs/screenshots/IMG_3691.png" alt="Скриншот 5" width="220">
-  <img src="docs/screenshots/IMG_3692.png" alt="Скриншот 6" width="220">
-  <img src="docs/screenshots/IMG_3693.png" alt="Скриншот 7" width="220">
-  <img src="docs/screenshots/IMG_3694.png" alt="Скриншот 8" width="220">
-</p>
+<table align="center">
+  <tr>
+    <td><img src="docs/screenshots/IMG_3687.png" alt="Скриншот 1" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3688.png" alt="Скриншот 2" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3689.png" alt="Скриншот 3" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3690.png" alt="Скриншот 4" width="180"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/IMG_3691.png" alt="Скриншот 5" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3692.png" alt="Скриншот 6" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3693.png" alt="Скриншот 7" width="180"></td>
+    <td><img src="docs/screenshots/IMG_3694.png" alt="Скриншот 8" width="180"></td>
+  </tr>
+</table>
 
 ---
 
