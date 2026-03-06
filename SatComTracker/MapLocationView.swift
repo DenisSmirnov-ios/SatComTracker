@@ -108,7 +108,7 @@ struct MapLocationView: View {
                             Button("Гибрид") { mapType = .hybrid }
                         } label: {
                             Image(systemName: "map")
-                                .foregroundColor(UITheme.accent)
+                                .foregroundColor(UITheme.accent(for: colorScheme))
                                 .padding(11)
                                 .background(UITheme.surfaceBackground(for: colorScheme))
                                 .clipShape(Circle())

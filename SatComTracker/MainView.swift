@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WelcomeView: View {
     @Binding var showSettings: Bool
+    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         ZStack {
@@ -9,7 +10,7 @@ struct WelcomeView: View {
             VStack(spacing: 20) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.system(size: 56, weight: .semibold, design: .rounded))
-                    .foregroundColor(UITheme.accent)
+                    .foregroundColor(UITheme.accent(for: colorScheme))
                 
                 Text("Требуется настройка")
                     .font(.system(size: 24, weight: .bold, design: .rounded))

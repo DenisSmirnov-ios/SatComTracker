@@ -1,10 +1,12 @@
 import SwiftUI
+import UIKit
 
 extension Notification.Name {
     static let settingsChanged = Notification.Name("settingsChanged")
 }
 
 struct ContentView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @StateObject private var locationManager = LocationManager()
     @StateObject private var apiService = SatelliteAPI()
     @StateObject private var settings = AppSettings()
@@ -75,6 +77,7 @@ struct ContentView: View {
         }
         .onAppear {
             startServices()
+            syncAppIconWithTheme()
             
             if shouldRefreshOnAppear {
                 checkAndRefreshData()
@@ -88,6 +91,14 @@ struct ContentView: View {
         .onChange(of: settings.isConfigured) { _ in
             if settings.isConfigured {
                 refreshData()
+            }
+        }
+        .onChange(of: settings.themeMode) { _ in
+            syncAppIconWithTheme()
+        }
+        .onChange(of: colorScheme) { _ in
+            if settings.themeMode == .system {
+                syncAppIconWithTheme()
             }
         }
         .onChange(of: locationManager.currentLocation) { _ in
@@ -115,6 +126,23 @@ struct ContentView: View {
             locationManager.requestLocation()
         }
         compassManager.start()
+    }
+
+    private func syncAppIconWithTheme() {
+        guard UIApplication.shared.supportsAlternateIcons else { return }
+
+        let desiredIconName: String
+        switch settings.themeMode {
+        case .light:
+            desiredIconName = "AppIconLight"
+        case .dark:
+            desiredIconName = "AppIconDark"
+        case .system:
+            desiredIconName = colorScheme == .dark ? "AppIconDark" : "AppIconLight"
+        }
+
+        guard UIApplication.shared.alternateIconName != desiredIconName else { return }
+        UIApplication.shared.setAlternateIconName(desiredIconName, completionHandler: nil)
     }
     
     private func checkAndRefreshData() {

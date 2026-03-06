@@ -34,7 +34,12 @@ enum UITheme {
     }
 
     static let accent = Color(red: 0.15, green: 0.55, blue: 0.92)
+    static let accentInverted = Color(red: 0.85, green: 0.45, blue: 0.08)
     static let radar = Color(red: 0.34, green: 0.74, blue: 1.0)
+
+    static func accent(for scheme: ColorScheme) -> Color {
+        scheme == .dark ? accentInverted : accent
+    }
 }
 
 struct AppBackground: View {
@@ -76,7 +81,7 @@ struct AppToolbarIconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 15, weight: .semibold))
-            .foregroundColor(UITheme.accent)
+            .foregroundColor(UITheme.accent(for: colorScheme))
             .frame(width: 32, height: 32)
             .background(UITheme.surfaceBackground(for: colorScheme).opacity(configuration.isPressed ? 0.70 : 0.98))
             .clipShape(Circle())
@@ -92,4 +97,3 @@ extension View {
         modifier(AppCardModifier(cornerRadius: cornerRadius))
     }
 }
-
